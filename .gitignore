@@ -1,0 +1,9 @@
+checkpoints/
+logs/
+videos/
+wandb/
+outputs/
+__pycache__/
+*.pyc
+*.pth
+.env
