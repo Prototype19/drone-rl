@@ -1,9 +1,38 @@
+# Training artifacts (large, regenerable)
 checkpoints/
 logs/
 videos/
 wandb/
 outputs/
+*.pth
+*.ckpt
+
+# Python
 __pycache__/
 *.pyc
-*.pth
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Secrets
 .env
+*.key
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Isaac Sim / Isaac Lab local caches
+.cache/
+nohup.out
