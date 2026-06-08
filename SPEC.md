@@ -90,7 +90,7 @@ The Spark is aarch64. The following Isaac Sim features are **NOT available** and
 - **TensorBoard** — local training visualization
 - **Weights & Biases** — experiment tracking (free tier; project name: `drone-rl`)
 - **tmux** — REQUIRED for any command expected to run longer than 2 minutes
-- **Git + GitHub** — private repo; commit at every working state
+- **Git + GitHub** — public repo at `Prototype19/drone-rl`; commit at every working state
 
 ### Project layout
 ```
@@ -140,7 +140,7 @@ The project is divided into phases. Do not start phase N+1 until phase N's deliv
 - [ ] Train `Isaac-Quadcopter-Direct-v0` headlessly for 5000+ iterations. Verify hover behavior.
 - [ ] Record an MP4 of the trained quadcopter policy. Inspect visually.
 - [ ] Set up W&B logging integrated with RSL-RL.
-- [ ] Initialize Git repo, push to private GitHub.
+- [ ] Initialize Git repo, push to GitHub.
 
 **Deliverable:** Trained stock quadcopter policy, TensorBoard + W&B both logging, video of hover.
 

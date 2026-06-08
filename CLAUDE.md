@@ -95,7 +95,7 @@ print(f'isaaclab: {isaaclab.__version__}')"
 
 ## Git conventions
 
-- **Remote:** `origin` (GitHub, private repo at `<username>/drone-rl`)
+- **Remote:** `origin` (GitHub, public repo at `Prototype19/drone-rl`)
 - **Default branch:** `main`
 - **Commit messages:** written from the actual diff, present tense imperative ("Add hover reward term" not "Added" or "Adding"). Multi-line body if the change is non-trivial.
 - **Commit cadence:** after every working state. "Hover trains to reward > 10" is a commit.
