@@ -96,12 +96,12 @@ print(f'isaaclab: {isaaclab.__version__}')"
 ## Git conventions
 
 - **Remote:** `origin` (GitHub, public repo at `Prototype19/drone-rl`)
-- **Default branch:** `main`
+- **Default branch:** `master`
 - **Commit messages:** written from the actual diff, present tense imperative ("Add hover reward term" not "Added" or "Adding"). Multi-line body if the change is non-trivial.
 - **Commit cadence:** after every working state. "Hover trains to reward > 10" is a commit.
 - **Tag phase boundaries:** `v0.1-cartpole-validated`, `v0.2-quadcopter-stock-trained`, `v0.3-hover-custom-env`, etc.
-- **Branch naming for experiments:** `experiment/<short-descriptor>` (e.g., `experiment/dense-energy-penalty`). Merge back to `main` only when the experiment is conclusive.
-- **Never force-push to `main`.** If a force-push seems necessary, stop and ask first.
+- **Branch naming for experiments:** `experiment/<short-descriptor>` (e.g., `experiment/dense-energy-penalty`). Merge back to `master` only when the experiment is conclusive.
+- **Never force-push to `master`.** If a force-push seems necessary, stop and ask first.
 - **Verify `.gitignore` is doing its job before pushing.** `git status` should never show `checkpoints/`, `logs/`, `videos/`, `wandb/`, or `*.pth` files as untracked.
 - **Never commit credentials.** API keys, W&B keys, GitHub tokens belong in environment variables or a `.env` file (which is gitignored).
 
