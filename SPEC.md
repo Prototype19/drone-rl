@@ -148,11 +148,11 @@ The project is divided into phases. Do not start phase N+1 until phase N's deliv
 **Goal:** Understand the stock quadcopter env line by line. **No new code in this phase.**
 
 **Tasks:**
-- [ ] Read `quadcopter_env_cfg.py` end to end. Document each config field in `NOTES.md`.
-- [ ] Read `quadcopter_env.py`. Document each method's purpose in `NOTES.md`.
-- [ ] Locate and read `CRAZYFLIE_CFG` in `isaaclab_assets`. Note mass, inertia, motor model.
-- [ ] Read `agents/rsl_rl_ppo_cfg.py`. List which hyperparameters exist (don't tune yet).
-- [ ] Answer in `NOTES.md`: how is thrust modeled? What's the action space? What termination conditions exist?
+- [x] Read `quadcopter_env_cfg.py` end to end. Document each config field in `NOTES.md`. *(Direct env — config is `QuadcopterEnvCfg` inside `quadcopter_env.py`; no separate cfg file.)*
+- [x] Read `quadcopter_env.py`. Document each method's purpose in `NOTES.md`.
+- [x] Locate and read `CRAZYFLIE_CFG` in `isaaclab_assets`. Note mass, inertia, motor model.
+- [x] Read `agents/rsl_rl_ppo_cfg.py`. List which hyperparameters exist (don't tune yet).
+- [x] Answer in `NOTES.md`: how is thrust modeled? What's the action space? What termination conditions exist?
 
 **Deliverable:** A 1-2 page summary in `NOTES.md` that explains the stock env from first principles.
 

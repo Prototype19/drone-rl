@@ -34,3 +34,96 @@ Conceptual notes as the project progresses.
   - `lin_vel` (scale **-0.05**) and `ang_vel` (scale **-0.01**): penalties on `Σ(velocity²)`. They don't describe the task; they shape *how* it's done — penalizing speed and spin so the drone is smooth and still, not zooming/tumbling.
   - **Key insight:** "reach the goal" alone is satisfied by flying *through* the goal at speed. The velocity penalties are what turn "reach it" into "reach it **and hold still**" — the optimum is goal-reward maxed *and* penalties ≈ 0 simultaneously, i.e. a stable hover.
   - Diagnostic value: penalties near zero at convergence (our run: `lin_vel` -0.017, `ang_vel` -0.164, `distance_to_goal` 12.54) is the *signature* of a clean hover. Early in training they're large negatives (flailing drone). This positive-objective + negative-regularizers pattern is standard across locomotion/control RL (velocity, energy, action-rate, joint-limit penalties).
+
+---
+
+## Phase 2 — Stock quadcopter env, from first principles
+
+**Deliverable for Phase 2.** Explains `Isaac-Quadcopter-Direct-v0` end to end. This is a **Direct** workflow env, so there is no manager/`*_env_cfg.py` split — the config dataclass (`QuadcopterEnvCfg`) and the env logic (`QuadcopterEnv`) live in one file. Four files cover the whole env:
+
+- `source/isaaclab_tasks/isaaclab_tasks/direct/quadcopter/quadcopter_env.py` — config + env
+- `source/isaaclab_tasks/isaaclab_tasks/direct/quadcopter/agents/rsl_rl_ppo_cfg.py` — PPO hyperparameters
+- `source/isaaclab_assets/isaaclab_assets/robots/quadcopter.py` — `CRAZYFLIE_CFG` robot asset
+- the `cf2x.usd` asset on Isaac Nucleus — where mass/inertia actually live
+
+### The one big idea: it's a wrench-controlled point body, not a real quadrotor
+
+The single most important thing to internalize: **the policy does not control four motors.** It outputs one collective thrust and three body torques, which are applied directly to the drone's base as a force + moment ("wrench"). The four propeller joints in the USD spin (initial velocity ±200 rad/s, alternating sign) but are driven by **dummy actuators with zero stiffness and zero damping** — they're cosmetic, for the video. There is no per-rotor thrust, no motor mixing, no rotor dynamics. This is a deliberate abstraction that makes the control problem clean; sim-to-real later will have to bridge from this idealized wrench to real per-motor PWM.
+
+### Config fields (`QuadcopterEnvCfg`)
+
+| Field | Value | Meaning |
+|---|---|---|
+| `episode_length_s` | 10.0 | Episode is 10 s of sim time. |
+| `decimation` | 2 | Policy acts every 2 physics steps. |
+| `sim.dt` | 1/100 | Physics at 100 Hz. |
+| → derived control rate | 50 Hz | `dt × decimation = 0.02 s` per policy step → **500 control steps/episode** (matches our logged `ep_len` 499, 0-indexed). |
+| `action_space` | 4 | collective thrust + 3 body moments. |
+| `observation_space` | 12 | see obs breakdown below. |
+| `state_space` | 0 | Critic uses the same obs as the actor (no privileged state). |
+| `debug_vis` | True | Draws the goal as a small cuboid marker. |
+| `scene.num_envs` | 4096 | Parallel envs (overridable on CLI). |
+| `scene.env_spacing` | 2.5 | Metres between env origins. |
+| `terrain` | flat plane | Ground, friction 1.0/1.0, restitution 0. |
+| `robot` | `CRAZYFLIE_CFG` | Spawned at `/World/envs/env_.*/Robot`. |
+| `thrust_to_weight` | 1.9 | Max collective thrust = 1.9 × weight. |
+| `moment_scale` | 0.01 | Scales the 3 body-moment actions (N·m). |
+| `lin_vel_reward_scale` | -0.05 | Linear-velocity penalty weight. |
+| `ang_vel_reward_scale` | -0.01 | Angular-velocity penalty weight. |
+| `distance_to_goal_reward_scale` | 15.0 | Goal objective weight. |
+
+### Methods (`QuadcopterEnv`)
+
+- `__init__` — allocates action/thrust/moment/goal buffers and the per-term episode-sum log dict; finds the `"body"` index; reads robot **mass at runtime** from PhysX (`root_physx_view.get_masses().sum()`) and computes `weight = mass × |gravity|`. (So thrust is always scaled to the *actual* asset mass, not a hard-coded number.)
+- `_setup_scene` — builds the articulation + terrain, clones the 4096 envs, adds a dome light.
+- `_pre_physics_step(actions)` — clamps actions to [-1, 1], then maps them (see thrust model below). Runs once per policy step.
+- `_apply_action` — writes the computed force + torque onto the body via the wrench composer. Runs every physics step.
+- `_get_observations` — builds the 12-D obs (below); returns `{"policy": obs}`.
+- `_get_rewards` — the three-term reward (documented in "Concepts learned" above); accumulates episode sums.
+- `_get_dones` — returns `(died, time_out)` (termination conditions below).
+- `_reset_idx` — logs episodic reward averages + metrics (`final_distance_to_goal`, termination counts), resets the robot to default state, **samples a new goal**, and on full resets randomizes `episode_length_buf` so envs don't all reset in lockstep (avoids throughput spikes). Goal sampling: `x,y ∈ U(-2, 2)` around the env origin, `z ∈ U(0.5, 1.5)`.
+- `_set_debug_vis_impl` / `_debug_vis_callback` — create/update the goal cuboid marker.
+
+### The three required answers
+
+**1. How is thrust modeled?** One collective thrust along **body +z**:
+```
+thrust_z = thrust_to_weight × weight × (a0 + 1) / 2     # a0 ∈ [-1, 1]
+```
+So `a0 = -1` → 0 N (free-fall), `a0 = 0` → 0.95 × weight (slowly sinking), `a0 = +1` → 1.9 × weight (max climb). Hover sits near `a0 ≈ 0.053` (thrust = weight). It is a single net force on the base — **not** four rotor thrusts. Body moments come from `a1:3 × moment_scale` (0.01 N·m full-scale) about the three body axes.
+
+**2. What is the action space?** 4-D continuous, clamped to [-1, 1]:
+- `a0` → collective thrust, mapped to [0, 1.9·W] as above.
+- `a1, a2, a3` → roll/pitch/yaw body moments, each scaled by `moment_scale = 0.01`.
+
+**3. What termination conditions exist?** From `_get_dones`:
+- `died` — altitude out of bounds: `z < 0.1 m` (crashed/too low) **or** `z > 2.0 m` (escaped upward). A real terminal failure.
+- `time_out` — reached the 10 s / 500-step horizon. A bootstrap truncation, not a failure.
+
+(In our Phase 1 run `died = 0.0` and episodes ran full length — every env survived to time-out, the signature of a stable hover.)
+
+### Observation vector (12-D, all body-frame)
+
+| Slice | Source | Dims |
+|---|---|---|
+| linear velocity | `root_lin_vel_b` | 3 |
+| angular velocity | `root_ang_vel_b` | 3 |
+| projected gravity | `projected_gravity_b` | 3 |
+| goal position (in body frame) | `subtract_frame_transforms(...)` → `desired_pos_b` | 3 |
+
+Note there is **no absolute position or orientation** in the obs — the policy only ever sees the goal *relative to itself* and which way is down (projected gravity). That's what makes the learned hover translation-invariant and directly portable to any start position.
+
+### `CRAZYFLIE_CFG` (the robot asset)
+
+- USD: `{ISAAC_NUCLEUS_DIR}/Robots/Bitcraze/Crazyflie/cf2x.usd`. Gravity enabled, gyroscopic forces on, self-collisions off, 4 position / 0 velocity solver iterations.
+- Init: spawn at `z = 0.5 m`; 4 motor joints `m1..m4` given initial spin ±200 rad/s (alternating sign, like a real X-config quad).
+- Actuators: a single `"dummy"` `ImplicitActuatorCfg` over all joints with **stiffness 0, damping 0** → confirms the props are unpowered/cosmetic (see "one big idea" above).
+- **Mass & inertia are not in this Python file** — they're baked into `cf2x.usd` and read at runtime. Nominal Crazyflie 2.x mass ≈ **0.027 kg (~27 g)**; the env never hard-codes it, it queries PhysX so thrust auto-scales to whatever the USD says.
+
+### PPO hyperparameters (`rsl_rl_ppo_cfg.py`) — inventory only, no tuning
+
+- **Runner:** `num_steps_per_env = 24`, `max_iterations = 200` (⚠️ our Phase 1 run did 5000 — that was a **CLI override**, the file default is 200), `save_interval = 50`, `experiment_name = "quadcopter_direct"`.
+- **Policy (actor-critic):** `init_noise_std = 1.0`, actor/critic hidden dims `[64, 64]`, `elu` activation, obs normalization **off** for both.
+- **Algorithm:** `clip_param = 0.2`, `entropy_coef = 0.0`, `value_loss_coef = 1.0` (clipped), `num_learning_epochs = 5`, `num_mini_batches = 4`, `learning_rate = 5e-4` with `adaptive` schedule, `gamma = 0.99`, `lam = 0.95`, `desired_kl = 0.01`, `max_grad_norm = 1.0`.
+
+These are the knobs available for Phase 4+ tuning; per the SPEC we do **not** touch them yet.
