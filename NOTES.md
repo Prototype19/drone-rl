@@ -127,3 +127,12 @@ Note there is **no absolute position or orientation** in the obs — the policy 
 - **Algorithm:** `clip_param = 0.2`, `entropy_coef = 0.0`, `value_loss_coef = 1.0` (clipped), `num_learning_epochs = 5`, `num_mini_batches = 4`, `learning_rate = 5e-4` with `adaptive` schedule, `gamma = 0.99`, `lam = 0.95`, `desired_kl = 0.01`, `max_grad_norm = 1.0`.
 
 These are the knobs available for Phase 4+ tuning; per the SPEC we do **not** touch them yet.
+
+---
+
+## Concepts learned (cont.)
+
+- **Does the stock wrench-control policy transfer to a real Crazyflie 2.1+?** The honest answer separates two axes that are easy to conflate:
+  - **Action granularity** (wrench = 1 thrust + 3 moments, *vs.* 4 individual motor commands) — mostly a *representation* choice, not a transfer blocker. A real quad has a **fixed motor-mixing matrix** that converts `(thrust, τ_roll, τ_pitch, τ_yaw)` → 4 motor PWMs; the Crazyflie firmware already does this in its "power distribution" stage. So a thrust+moments policy maps onto a standard interface point in the real stack — the mixing is arithmetic, **not something to learn**. Training a net to rediscover a known constant matrix just buys a harder sim-to-real problem.
+  - **Actuator fidelity** (idealized instant-perfect wrench *vs.* a realistic motor model) — **this is what actually breaks transfer.** The stock env applies the commanded wrench instantly, perfectly, from ground-truth state. The real drone has motor spin-up lag (~tens of ms), nonlinear PWM→thrust, battery-voltage sag, **saturation coupling** (all 4 motors share headroom — can't max thrust *and* max yaw at once; the wrench model lets the policy request infeasible combinations), control/sensor latency, and EKF state estimation noise (IMU + Lighthouse) instead of perfect state.
+  - **Key takeaway:** you do **not** need per-motor actions to fly the real drone properly. Per-motor control only buys fidelity on saturation/coupling — and without a realistic motor model behind it, 4 ideal thrusters are just as idealized as one ideal wrench. The fix for transfer is a better actuator/sensor model + **domain randomization**, which is exactly what **Phase 4** is for. Action-space granularity is a **Phase 7/8** (hardware, separate spec) decision; the likely deployment is "policy outputs thrust + body-rates, firmware does the mixing," with per-motor as a fallback only if coupling turns out to matter. (Verify the 2.1+ firmware setpoint interfaces against current Bitcraze docs before locking a hardware approach.)
