@@ -136,3 +136,29 @@ These are the knobs available for Phase 4+ tuning; per the SPEC we do **not** to
   - **Action granularity** (wrench = 1 thrust + 3 moments, *vs.* 4 individual motor commands) — mostly a *representation* choice, not a transfer blocker. A real quad has a **fixed motor-mixing matrix** that converts `(thrust, τ_roll, τ_pitch, τ_yaw)` → 4 motor PWMs; the Crazyflie firmware already does this in its "power distribution" stage. So a thrust+moments policy maps onto a standard interface point in the real stack — the mixing is arithmetic, **not something to learn**. Training a net to rediscover a known constant matrix just buys a harder sim-to-real problem.
   - **Actuator fidelity** (idealized instant-perfect wrench *vs.* a realistic motor model) — **this is what actually breaks transfer.** The stock env applies the commanded wrench instantly, perfectly, from ground-truth state. The real drone has motor spin-up lag (~tens of ms), nonlinear PWM→thrust, battery-voltage sag, **saturation coupling** (all 4 motors share headroom — can't max thrust *and* max yaw at once; the wrench model lets the policy request infeasible combinations), control/sensor latency, and EKF state estimation noise (IMU + Lighthouse) instead of perfect state.
   - **Key takeaway:** you do **not** need per-motor actions to fly the real drone properly. Per-motor control only buys fidelity on saturation/coupling — and without a realistic motor model behind it, 4 ideal thrusters are just as idealized as one ideal wrench. The fix for transfer is a better actuator/sensor model + **domain randomization**, which is exactly what **Phase 4** is for. Action-space granularity is a **Phase 7/8** (hardware, separate spec) decision; the likely deployment is "policy outputs thrust + body-rates, firmware does the mixing," with per-motor as a fallback only if coupling turns out to matter. (Verify the 2.1+ firmware setpoint interfaces against current Bitcraze docs before locking a hardware approach.)
+
+---
+
+## Next session — Phase 3 wrap-up (handoff, written 2026-06-10 ~00:25 PT, mid-run)
+
+**Phase 3 is ~90% done. The custom hover env is built, committed, and training. Only the wrap-up (video / eval / EXPERIMENTS / commit / tag) remains.** Do NOT start Phase 4 without user approval.
+
+### What's done
+- Custom task `Isaac-Crazyflie-Hover-Direct-v0` built as a project-owned external extension in `source/crazyflie_hover/` (+ launchers `scripts/train.py`, `scripts/play.py`). Faithful copy of the stock quadcopter env, **fixed-goal hover** (env-origin xy, z=1.0) the only deviation. **Committed: `d2384e3`** (not yet pushed). Installed editable into the Isaac Lab Python (`pip install -e`), so it's importable for train/play.
+- Training launched 2026-06-10 00:08 PT in **tmux `train`**: 4096 envs, **3000 iters**, headless.
+  - **Log dir (durable):** `~/IsaacLab/logs/rsl_rl/crazyflie_hover/2026-06-10_00-08-59/` (checkpoints every 50; final will be `model_2999.pt`).
+  - Tee log (may vanish on reboot): `/tmp/cf_hover_train.log`.
+  - **Already converged by ~iter 580:** mean reward **≈146.9**, `final_distance_to_goal` **≈0.0016 m** (vs Phase 1's 0.083 m — tighter because the goal is fixed). Rest of the run just holds flat.
+
+### Wrap-up TODO (resume here)
+1. **Confirm it finished:** `grep TRAIN_EXIT /tmp/cf_hover_train.log` (want `=0`), or check newest `model_*.pt` in the log dir is `model_2999.pt`. If tmux `train` is still alive, capture final reward then `tmux kill-session -t train`; verify GPU is free (`nvidia-smi`).
+2. **Record hover video:** `./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/play.py --task Isaac-Crazyflie-Hover-Direct-v0 --num_envs 16 --headless --video --video_length 300` (in tmux).
+3. **Evaluate success bar:** within **0.5 m of the hover point for 95%** of an eval episode. final_distance ≈0.0016 m → passes with huge margin, but confirm it's *sustained* (whole episode), not just terminal.
+4. **Log EXPERIMENTS.md:** new top row — date, `Isaac-Crazyflie-Hover-Direct-v0`, 4096 envs/3000 iters, final reward, final_distance, ✅ outcome, log dir. Match existing format.
+5. **Update NOTES:** replace this "Next session" block with a Phase 3 COMPLETE handoff + any concept learned (e.g. fixed-goal converges far faster/tighter than random-goal).
+6. **Commit docs** (show user first), then **tag the boundary `v0.3-hover-custom-env`** per CLAUDE.md, and **push** (use the `gh` HTTPS fallback if ssh-agent isn't loaded — see memory).
+7. Phase 3 done → **ask user before starting Phase 4 (domain randomization).**
+
+### Reminders
+- ⚠️ Per CLAUDE.md rule #5, the reward function is now **LOCKED** after Phase 3 — any change needs a proposal first.
+- W&B logging still deferred (needs user's API key as env var).
