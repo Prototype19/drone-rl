@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crazyflie_hover"
+version = "0.1.0"
+description = "Custom Crazyflie fixed-point hover task for Isaac Lab (drone-rl Phase 3)."
+requires-python = ">=3.11"
+# Runtime deps (isaaclab, isaaclab_tasks, isaaclab_rl, gymnasium, torch) are
+# provided by the Isaac Lab bundled Python environment; not pinned here.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["crazyflie_hover*"]
