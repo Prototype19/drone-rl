@@ -2,6 +2,8 @@
 
 Conceptual notes as the project progresses.
 
+> **Terminology note (2026-06-16):** The spec migrated from phases to milestones (M0–M9) — see SPEC.md §6. This journal predates that and still says "Phase N"; the mapping is Phase 1 → M0+M1, Phase 2 → M2, Phase 3 → M3, Phase 4 → M4–M6, Phase 5 → M7, Phase 6 → M8, Phase 7 → M9. Entries below are kept in their original voice.
+
 ---
 
 ## Session Handoff — 2026-06-08 (Phase 1 COMPLETE ✅)

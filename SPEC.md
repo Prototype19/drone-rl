@@ -1,301 +1,373 @@
-# Drone RL Project Specification
+# SPEC: Drone RL — Crazyflie 2.1+ in Isaac Lab
 
-> **For Claude Code:** This is the source of truth for the project. Read this first, every session, before making decisions. If something here conflicts with what's in code, the spec wins until we agree to change the spec. If you think the spec should change, propose the change explicitly before changing code.
+| Field | Value |
+|---|---|
+| Status | Active |
+| Owner | Daron (Prototype19) |
+| Created | 2026-06-16 |
+| Last updated | 2026-06-16 |
+| Repo | `~/spark-dev-workspace/drone-rl/` · GitHub `Prototype19/drone-rl` (public) |
+| Target environment | DGX Spark — GB10, aarch64, 128 GiB unified memory, Ubuntu 24.04 |
+| Permission overrides | See `.claude/settings.json` in this repo (set via `/permissions-interview`) |
 
----
-
-## 1. Project Summary
-
-Train a reinforcement learning policy in NVIDIA Isaac Lab that controls a Crazyflie 2.1+ quadcopter to:
-
-1. **Hover** stably at a target position
-2. **Follow waypoints** sent from the user's laptop
-3. **Avoid obstacles** in a known indoor environment
-
-The trained policy will eventually be deployed sim-to-real on a physical Crazyflie 2.1+ with indoor Lighthouse positioning. Hardware purchase is deferred until Phase 1 sim work is complete.
-
-### What this project is NOT
-- Not an outdoor drone project (Crazyflie is unsuitable for wind, forests, hilly terrain)
-- Not a vision-based perception project (state + range observations only; no cameras)
-- Not a multi-drone or swarm project
-- Not a from-scratch flight controller project (we use Crazyflie firmware as-is)
+> **For the agent:** This is the source of truth. Read it first, every session. If it conflicts with code, the spec wins until we agree to change the spec — propose spec changes explicitly and log them in §10. The original phase-based spec is archived at `Old_SPEC.md`; this file supersedes it.
 
 ---
 
-## 2. Hardware Targets (deferred until Phase 1 complete)
+## 1. Goal & Motivation
 
-| Item | Choice | Approx. cost |
-|------|--------|--------------|
-| Drone | Crazyflie 2.1+ Bundle (Bitcraze) | ~$280 |
-| Radio | Crazyradio 2.0 | ~$50 |
-| Positioning | Lighthouse Positioning Kit + 2 base stations | ~$250 |
-| Sensing | Multiranger deck (4-5 directional rangefinders) | ~$50 |
-| Spare batteries | 4+ LiPo packs | ~$25 |
-| **Total** | | **~$655** |
+**What:** Train a reinforcement-learning policy in NVIDIA Isaac Lab that controls a Crazyflie 2.1+ quadcopter to (1) hover stably, (2) follow waypoints, and (3) avoid static obstacles — using state-and-range observations only (no vision). The policy is intended for eventual sim-to-real deployment onto physical hardware with off-board inference.
 
-**Compute split:** Off-board. Policy runs on the user's laptop or Spark; commands are sent to the drone via Crazyradio. The Crazyflie's STM32 runs only the low-level flight controller (Bitcraze firmware, unmodified).
+**Why:** A hands-on path to learn modern RL-for-robotics end to end on the DGX Spark — from validating a recent, fast-moving stack (Isaac Sim 5.1 / PyTorch 2.9 / CUDA 13 on aarch64) through to a deployable autonomy policy — while building reusable conceptual knowledge captured in NOTES.md and `~/knowledge-base/`.
+
+**Definition of overall success:** A single trained policy flies a Crazyflie in Isaac Sim that holds hover within 0.5 m of a target for 95% of an evaluation episode, follows a 10-waypoint sequence at ≥90% success, and completes obstacle courses (5+ obstacles) at ≥80%, all reproducible headless from a clean clone. Hardware deployment is an explicit go/no-go decision *after* the sim work, not part of this spec's success bar.
 
 ---
 
-## 3. Verified Configuration (as of project start)
+## 2. Scope
 
-This is the actual, verified configuration on the development Spark. Discrepancies between this and what's installed should be investigated.
+### In scope
+- Custom Isaac Lab environments for hover, waypoint following, and obstacle avoidance on the Crazyflie 2.1+ asset.
+- PPO training via `rsl-rl-lib` (Isaac Lab native), headless, on the Spark.
+- Domain randomization to harden the policy against the sim-to-real reality gap.
+- A simulated Multiranger-like ray-cast sensor (5 directional rangefinders) for obstacle sensing.
+- TensorBoard experiment tracking; reproducible runs logged in EXPERIMENTS.md.
+- Conceptual documentation (NOTES.md) and a public README.
 
+### Out of scope (non-goals)
+- **Vision/perception** — no cameras; state + range observations only.
+- **Multi-drone / swarm** behavior.
+- **Outdoor flight** — Crazyflie is unsuitable for wind/forest/terrain.
+- **Custom flight-controller firmware** — Bitcraze firmware is used as-is; we do not modify the STM32 low-level controller.
+- **Hardware bring-up and sim-to-real transfer** — deferred to a separate `SPEC_HARDWARE.md` (see Future work).
+- **Hyperparameter tuning before the env is correct** — env correctness precedes tuning.
+
+### Future work (explicitly deferred)
+- **Sim-to-real (hardware):** Crazyflie 2.1+ bundle, Crazyradio 2.0, Lighthouse positioning, Multiranger deck (~$655 total). Separate spec, written only if M9's decision is "proceed."
+- **Weights & Biases tracking:** optional cloud experiment tracking (project `drone-rl`). Requires `WANDB_API_KEY`. Not wired up; TensorBoard covers current needs.
+- **Network-architecture exploration:** default to RSL-RL's MLP; revisit only if performance plateaus.
+
+---
+
+## 3. Requirements
+
+### Functional
+- **FR-1:** A version-check confirms the pinned stack (PyTorch 2.9.0+cu130, CUDA available, isaaclab 0.54.3) and a stock task trains headlessly to completion. *(M0)*
+- **FR-2:** The stock `Isaac-Quadcopter-Direct-v0` task trains to a stable hover and a play-video is recorded. *(M1)*
+- **FR-3:** The stock quadcopter env is documented from first principles in NOTES.md (thrust model, action space, terminations, observation vector, robot cfg, PPO hyperparameters). *(M2)*
+- **FR-4:** A project-owned custom env `Isaac-Crazyflie-Hover-Direct-v0` (fixed-goal hover) registers, loads headless, and trains to convergence. *(M3)*
+- **FR-5:** Domain randomization (init pose/vel, mass ±20%, per-motor ±15%, external force perturbations, observation noise, action latency, CoM offset) is added incrementally and the hover policy stays robust. *(M4–M6)*
+- **FR-6:** The env extends to waypoint following: relative-goal observation, distance reward + success bonus, goal resampling, defined workspace. *(M7)*
+- **FR-7:** The env extends to obstacle avoidance: 5-ray sensor, randomized obstacles, proximity penalty + collision termination. *(M8)*
+- **FR-8:** Every training run is logged in EXPERIMENTS.md (one row) and each phase boundary is git-tagged `v0.x-<descriptor>`. *(all milestones)*
+
+### Non-functional
+- **NFR-1:** All Isaac Lab invocations run with `--headless`. No GUI mode on the Spark (livestream unsupported on aarch64).
+- **NFR-2:** Any process expected to run > 2 minutes runs inside `tmux`.
+- **NFR-3:** Training fits within 128 GiB unified memory at the chosen `num_envs`.
+- **NFR-4:** Reward terms are named functions; weights live in env config, never as literals in env logic. Type hints on signatures; Google-style docstrings on public classes/methods.
+- **NFR-5:** `checkpoints/`, `logs/`, `videos/`, `wandb/`, `*.pth`, `outputs/`, `__pycache__/` are gitignored and never committed.
+- **NFR-6:** One concept per training run — never change reward + randomization + hyperparameters together.
+
+### Constraints
+- **Hardware/OS:** DGX Spark, GB10, aarch64, 128 GiB unified memory, Ubuntu 24.04.4, kernel 6.17.0-1021-nvidia, NVIDIA driver 580.159.03. Fixed.
+- **aarch64 unsupported features (must not be used):** livestreaming/WebRTC, OBJ imports (use STL/USD), Hub Workstation Cache, Application Template, cuRobo/cuMotion, Isaac Sim App Selector.
+- **Pinned stack:** see §4 Stack table. PyTorch 2.9 + CUDA 13 are recent — version drift is the first hypothesis when a tutorial "should work" but doesn't.
+- **System updates** go through the DGX Dashboard, not `apt upgrade`. The user is not in the `docker` group by design.
+- **Reward function is locked after M3** — changes require a proposal first (invalidates prior experiments).
+
+---
+
+## 4. Technical Approach
+
+### Stack
 | Component | Version | Notes |
-|-----------|---------|-------|
+|---|---|---|
 | OS | Ubuntu 24.04.4 LTS | aarch64 |
-| Kernel | 6.17.0-1021-nvidia | NVIDIA's kernel |
+| Kernel | 6.17.0-1021-nvidia | NVIDIA kernel |
 | GPU | NVIDIA GB10 | DGX Spark, 128 GiB unified memory |
 | NVIDIA driver | 580.159.03 | |
-| Python (bundled) | 3.11.13 | Inside Isaac Sim env |
+| Python (bundled) | 3.11.13 | inside Isaac Sim env |
 | PyTorch | 2.9.0+cu130 | CUDA 13.0 build |
-| CUDA build | 13.0 | Matches PyTorch wheel |
-| Isaac Sim | 5.1.0-rc.19 | Built from source @ commit `aa503a9` |
-| Isaac Lab repo | 2.3.2 | Cloned @ commit `a859a5f9d` |
-| `isaaclab` package | 0.54.3 | Python package version |
-| RSL-RL | `rsl-rl-lib` 5.0.1 | Installed in bundled Python env. Note: package doesn't expose `__version__` attribute; check via `pip show rsl-rl-lib` |
-| Disk free | 3.4 TB / 3.7 TB | Plenty of room |
+| CUDA build | 13.0 | matches PyTorch wheel |
+| Isaac Sim | 5.1.0-rc.19 | built from source @ commit `aa503a9` |
+| Isaac Lab repo | 2.3.2 | cloned @ commit `a859a5f9d` |
+| `isaaclab` package | 0.54.3 | |
+| RSL-RL | `rsl-rl-lib` 5.0.1 | no `__version__` attr; check `pip show rsl-rl-lib` |
+| TensorBoard | (bundled) | required local tracker |
+| Weights & Biases | — | optional/deferred (see Future work) |
 
-**Project paths:**
+### Architecture overview
+```
+Policy (PPO, RSL-RL MLP)  ──actions──▶  Isaac Lab Direct env  ──wrench──▶  Crazyflie articulation (Isaac Sim / PhysX)
+        ▲                                       │
+        └────────────── observations ──────────┘   (4096 parallel envs, headless)
+
+Custom env lives in source/crazyflie_hover/ as an editable external extension,
+pip-installed into the Isaac Lab bundled Python. Launched via project wrappers
+scripts/train.py and scripts/play.py against ~/IsaacLab.
+```
+The stock quadcopter env is **wrench-controlled** (1 collective thrust + 3 body moments applied to the base), not per-motor — the four props are cosmetic dummy actuators. See NOTES.md "wrench-controlled point body" and the sim-to-real transfer note for the full rationale; not duplicated here.
+
+### Key design decisions
+| Decision | Rationale | Alternatives rejected |
+|---|---|---|
+| RSL-RL PPO (Isaac Lab native) | Matches the Arm DGX Spark learning path; integrated logging/checkpointing | SB3 / other PPO — extra integration friction |
+| Custom env as external extension in `source/crazyflie_hover/` | Project-owned, pip-installed editable, importable for train/play without forking Isaac Lab | In-tree edit of Isaac Lab; `envs/` dir from the original spec (corrected — env is at `source/`) |
+| Fixed-goal hover for M3 | Converges far faster/tighter than random-goal (≈0.0016 m vs 0.083 m) — clean baseline | Random-goal hover first |
+| Wrench control kept (not per-motor) | Per-motor only adds fidelity on saturation/coupling; real firmware does motor mixing as fixed arithmetic, not learned | Per-motor actions — harder sim-to-real for no learning benefit pre-hardware |
+| TensorBoard required, W&B optional | TensorBoard is local/zero-setup and has covered all needs; W&B needs an API key never wired up | W&B as a hard requirement (perpetually deferred → demoted) |
+| Descriptive git tags `v0.x-<descriptor>` | Matches existing history (`v0.1-cartpole-validated`, `v0.2-quadcopter-stock-trained`) and is human-readable | `m{n}-verified` template style — breaks tag continuity |
+| Two-tier milestone verifiers | RL training is long and stochastic; a fast mechanical gate keeps CI-like checks cheap while the metric bar defines real success | Strict metric-parsing gate (slow/flaky); smoke-only (no quality signal) |
+
+---
+
+## 5. Environment & Setup
+
+**Hardware/OS assumptions:** DGX Spark (GB10, aarch64), Ubuntu 24.04, the pinned stack in §4. Isaac Sim and Isaac Lab are installed outside this repo and are *not* vendored here.
+
+**Setup commands:**
+```bash
+# from clean clone of drone-rl (assumes Isaac Sim + Isaac Lab already installed per SETUP_NOTES.md):
+git clone https://github.com/Prototype19/drone-rl.git ~/spark-dev-workspace/drone-rl
+cd ~/spark-dev-workspace/drone-rl
+
+# install the custom env into the Isaac Lab bundled Python (editable):
+~/IsaacLab/_isaac_sim/python.sh -m pip install -e source/crazyflie_hover
+
+# sanity: versions match SPEC §4
+~/IsaacLab/_isaac_sim/python.sh -c "import torch, isaaclab; print(torch.__version__, torch.cuda.is_available(), isaaclab.__version__)"
+```
+
+**Key paths:**
 - Project root: `~/spark-dev-workspace/drone-rl/`
-- Isaac Sim source: `~/IsaacSim/`
-- Isaac Sim build output: `$ISAACSIM_PATH` = `~/IsaacSim/_build/linux-aarch64/release`
-- Isaac Lab: `~/IsaacLab/`
-- Bundled Python: `~/IsaacLab/_isaac_sim/python.sh`
+- Isaac Lab: `~/IsaacLab/` · bundled Python: `~/IsaacLab/_isaac_sim/python.sh`
+- Isaac Sim build: `$ISAACSIM_PATH` = `~/IsaacSim/_build/linux-aarch64/release`
+- Custom env: `source/crazyflie_hover/` · launchers: `scripts/train.py`, `scripts/play.py`
 
-**Heads up:** PyTorch 2.9 and CUDA 13 are very recent (released within the past few months). If you hit "this used to work" issues following online tutorials or older docs, version drift is a likely cause. Check version compatibility before assuming a bug.
+**Secrets/credentials required:** `WANDB_API_KEY` (only if optional W&B tracking is enabled — names only, never commit the value).
 
----
-
-## 4. aarch64 limitations to respect
-
-The Spark is aarch64. The following Isaac Sim features are **NOT available** and must not be used:
-- Livestreaming (no `isaac-sim.streaming.sh`, no WebRTC client)
-- OBJ file imports (affects URDF importer for OBJ meshes — use STL/USD instead)
-- Hub Workstation Cache
-- Application Template
-- cuRobo / cuMotion
-- Isaac Sim App Selector
-
-**All Isaac Lab scripts run with `--headless`. No exceptions until NoMachine remote desktop is configured separately.**
+**Relevant knowledge-base entries:** `~/knowledge-base/` — scan its `README.md` index for Isaac Sim / Isaac Lab / aarch64 entries at session start. Pipeline mechanics (skills, memory, `/retro`) live in global `~/.claude/CLAUDE.md`; this spec does not duplicate them.
 
 ---
 
-## 5. Stack and Conventions
+## 6. Milestones
 
-### Required tools
-- **Isaac Sim + Isaac Lab** — simulation and env framework
-- **RSL-RL** — PPO implementation (Isaac Lab native; matches Arm DGX Spark guide)
-- **PyTorch 2.9 with CUDA 13** — bundled in Isaac Sim Python env
-- **TensorBoard** — local training visualization
-- **Weights & Biases** — experiment tracking (free tier; project name: `drone-rl`)
-- **tmux** — REQUIRED for any command expected to run longer than 2 minutes
-- **Git + GitHub** — public repo at `Prototype19/drone-rl`; commit at every working state
+> Two-tier verifier convention: the **Verifier** is the fast mechanical gate that must pass to close a milestone (env loads headless, smoke run exits 0, artifact exists). The **Success bar** is the documented quality threshold the deliverable must meet — judged at review, not asserted by the gate command (RL runs are long and stochastic). Statuses: ☐ not started / ◐ in progress / ☑ verified / ✗ blocked.
 
-### Project layout
+### M0 — Environment validation
+- **Status:** ☑ (tag `v0.1-cartpole-validated`)
+- **Objective:** Pinned stack is present and a stock task trains headlessly end to end.
+- **Deliverables:** version-check output; cartpole training run + TensorBoard curve.
+- **Verifier:**
+  ```bash
+  ~/IsaacLab/_isaac_sim/python.sh -c "import torch, isaaclab; print(torch.__version__, torch.cuda.is_available(), isaaclab.__version__)"
+  cd ~/IsaacLab && ./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py \
+      --task Isaac-Cartpole-Direct-v0 --headless --max_iterations 150
+  ```
+  **Expected result:** prints `2.9.0+cu130 True 0.54.3`; cartpole exits 0 and reward climbs from ~-5 to ~>250.
+- **Success bar:** pipeline validated end to end (train + checkpoints + TensorBoard).
+- **Review gate:** No (mechanical)
+- **Checkpoint:** `v0.1-cartpole-validated`
+
+### M1 — Stock quadcopter trained + hover video
+- **Status:** ☑ (tag `v0.2-quadcopter-stock-trained`)
+- **Objective:** Stock `Isaac-Quadcopter-Direct-v0` trains to stable hover; video recorded.
+- **Deliverables:** trained checkpoint; play MP4; EXPERIMENTS.md row.
+- **Depends on:** M0
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py \
+      --task Isaac-Quadcopter-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** smoke run exits 0; reward logging present.
+- **Success bar:** full 5000-iter run → reward >100, `final_distance_to_goal` <0.1 m, `died`=0.0, episodes run full length; hover MP4 recorded.
+- **Review gate:** Yes — visual inspection of hover video.
+- **Checkpoint:** `v0.2-quadcopter-stock-trained`
+
+### M2 — Stock-env source deep-dive (no new code)
+- **Status:** ☑
+- **Objective:** Understand and document the stock quadcopter env from first principles.
+- **Deliverables:** NOTES.md section covering thrust model, action space, termination conditions, the 12-D observation vector, `CRAZYFLIE_CFG`, and the PPO hyperparameter inventory.
+- **Depends on:** M1
+- **Verifier:**
+  ```bash
+  grep -q "from first principles" ~/spark-dev-workspace/drone-rl/NOTES.md && \
+  grep -qi "wrench" ~/spark-dev-workspace/drone-rl/NOTES.md && echo OK
+  ```
+  **Expected result:** prints `OK`; the section addresses all five required topics.
+- **Success bar:** a reader unfamiliar with the env can state thrust model, action/obs spaces, and terminations from the doc alone.
+- **Review gate:** Yes — human reads the write-up.
+- **Checkpoint:** docs commit (no version tag; no code change)
+
+### M3 — Custom fixed-goal hover env
+- **Status:** ◐ (env built/trained/converged; wrap-up pending — see §8)
+- **Objective:** Project-owned `Isaac-Crazyflie-Hover-Direct-v0` registers, loads headless, and trains to convergence on a fixed hover point.
+- **Deliverables:** `source/crazyflie_hover/` extension; `scripts/train.py` + `scripts/play.py`; trained checkpoint; hover MP4; EXPERIMENTS.md row.
+- **Depends on:** M2
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Hover-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** task is registered, env loads, smoke run exits 0 with reward logging.
+- **Success bar:** full run holds within **0.5 m of the hover point for 95%** of an eval episode (sustained, not just terminal); video confirms stable hover.
+- **Review gate:** Yes — eval metrics + video.
+- **Checkpoint:** `v0.3-hover-custom-env`
+
+### M4 — Domain randomization #1 (init state, mass, motor strength)
+- **Status:** ☐
+- **Objective:** Add init pose/velocity randomization, mass ±20% (~27 g ± 5 g), per-motor strength ±15%; hover stays robust. Add one at a time, retrain after each.
+- **Deliverables:** randomization ranges in env config; retrained checkpoint(s); EXPERIMENTS.md rows.
+- **Depends on:** M3
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Hover-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** env loads with the new randomization enabled; smoke run exits 0.
+- **Success bar:** retrained policy still holds <0.5 m hover with all three randomizations active.
+- **Review gate:** Yes
+- **Checkpoint:** `v0.4-domain-rand-1`
+
+### M5 — Domain randomization #2 (force perturbations, observation noise)
+- **Status:** ☐
+- **Objective:** Add external force perturbations (simulated wind/touch) and Gaussian observation noise (position σ≈2 cm, orientation). One at a time, retrain after each.
+- **Deliverables:** config ranges; retrained checkpoint(s); EXPERIMENTS.md rows.
+- **Depends on:** M4
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Hover-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** env loads with perturbations + noise enabled; smoke run exits 0.
+- **Success bar:** policy recovers from force perturbations and tolerates obs noise; holds <0.5 m.
+- **Review gate:** Yes
+- **Checkpoint:** `v0.5-domain-rand-2`
+
+### M6 — Domain randomization #3 (action latency, CoM offset)
+- **Status:** ☐
+- **Objective:** Add 1-timestep action latency and random center-of-mass offset (±5 mm/axis). Hover survives the full perturbation suite.
+- **Deliverables:** config ranges; final robust hover checkpoint; EXPERIMENTS.md rows; perturbation-recovery video.
+- **Depends on:** M5
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Hover-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** env loads with latency + CoM offset enabled; smoke run exits 0.
+- **Success bar:** policy recovers from **all seven** perturbation types; video evidence.
+- **Review gate:** Yes
+- **Checkpoint:** `v0.6-domain-rand-full`
+
+### M7 — Waypoint following
+- **Status:** ☐
+- **Objective:** Drone tracks a sequence of 3D goals: relative-goal observation, distance reward + success bonus, goal resampling, defined 4 m × 4 m × 3 m workspace, all M4–M6 randomization active.
+- **Deliverables:** extended env (obs += relative goal); modified reward (proposed first, per locked-reward rule); trained checkpoint; waypoint-flight video; EXPERIMENTS.md row.
+- **Depends on:** M6
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Waypoint-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** extended-obs env registers and loads; smoke run exits 0.
+- **Success bar:** reaches a sequence of 10 random waypoints in <60 s simulated time at ≥90% success; video of a known path (square/figure-8).
+- **Review gate:** Yes
+- **Checkpoint:** `v0.7-waypoint`
+
+### M8 — Obstacle avoidance
+- **Status:** ☐
+- **Objective:** Drone avoids randomized static obstacles while still reaching waypoints, using a 5-ray Multiranger-like sensor (front/back/left/right/up, clipped ~4 m).
+- **Deliverables:** ray-cast sensor (+5 obs floats); randomized obstacles; proximity penalty + collision termination; trained checkpoint; course-navigation video; EXPERIMENTS.md row.
+- **Depends on:** M7
+- **Verifier:**
+  ```bash
+  cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+      --task Isaac-Crazyflie-Obstacle-Direct-v0 --headless --num_envs 4096 --max_iterations 50
+  ```
+  **Expected result:** sensor + obstacles load; smoke run exits 0.
+- **Success bar:** ≥80% completion on procedurally generated courses with 5+ obstacles; video.
+- **Review gate:** Yes
+- **Checkpoint:** `v0.8-obstacle-avoid`
+
+### M9 — Decision point (non-coding gate)
+- **Status:** ☐
+- **Objective:** Re-evaluate whether to proceed to hardware sim-to-real, do more sim work, or stop. No new code.
+- **Deliverables:** a go/no-go decision recorded in §10 Decision Log; if "proceed," a `SPEC_HARDWARE.md` stub is created.
+- **Depends on:** M8
+- **Verifier:**
+  ```bash
+  grep -q "M9" ~/spark-dev-workspace/drone-rl/SPEC.md && \
+  grep -qiE "proceed|stop|more sim" ~/spark-dev-workspace/drone-rl/SPEC.md && echo "decision recorded"
+  ```
+  **Expected result:** prints `decision recorded`; Decision Log has an M9 row.
+- **Review gate:** Yes — human decision.
+- **Checkpoint:** `v0.9-sim-complete`
+
+---
+
+## 7. Verification Strategy
+
+**Test approach:** Verification is per-milestone (§6), two-tier. There is no unit-test suite; the "tests" are the mechanical smoke verifiers plus documented success bars. The single fastest health check across the project:
+```bash
+# stack + custom env load smoke (no training):
+~/IsaacLab/_isaac_sim/python.sh -c "import torch, isaaclab; print(torch.__version__, torch.cuda.is_available(), isaaclab.__version__)"
+cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.py \
+    --task Isaac-Crazyflie-Hover-Direct-v0 --headless --num_envs 64 --max_iterations 5
 ```
-~/spark-dev-workspace/drone-rl/
-├── SPEC.md                     # This file. Source of truth.
-├── CLAUDE.md                   # Short Claude Code orientation; references SPEC.md
-├── NOTES.md                    # Conceptual notes as the user learns
-├── SETUP_NOTES.md              # Install commands actually run, gotchas hit
-├── EXPERIMENTS.md              # One-line-per-training-run log
-├── README.md                   # Public-facing overview
-├── envs/                       # Custom Isaac Lab environments
-│   └── crazyflie_hover/        # Phase 3 env, etc.
-├── scripts/
-│   ├── train.py                # Thin wrapper around Isaac Lab train
-│   ├── play.py                 # Thin wrapper around Isaac Lab play
-│   └── record_video.py         # Helper to scp video to laptop
-├── configs/                    # YAML/Python configs for experiments
-├── checkpoints/                # gitignored; trained policies
-├── logs/                       # gitignored; tensorboard, wandb
-└── videos/                     # gitignored; recorded MP4s
-```
 
-### Coding conventions
-- Type hints on all function signatures
-- Docstrings on all public classes and methods (Google style)
-- One env per directory; each env has `__init__.py`, `*_env.py`, `*_env_cfg.py`
-- Reward terms named clearly: `reward_hover`, `reward_action_smoothness`, etc. Never `r1`, `r2`.
-- All randomization ranges go in env config, not hardcoded in env logic
-- `print()` for one-off debugging only. Use Python `logging` for anything that stays in.
+**Continuous checks:** No CI (single-developer, GPU-bound). Before declaring a milestone done: confirm the mechanical verifier exits 0, then judge the success bar from logs/video. Reward-term and config-weight conventions (NFR-4) checked at review.
 
-### Git discipline
-- Commit after every working state. "Hover trains to reward > 10" is a commit.
-- Tag at end of each phase: `v0.1-hover`, `v0.2-randomization`, etc.
-- `.gitignore` excludes: `checkpoints/`, `logs/`, `videos/`, `*.pth`, `wandb/`, `outputs/`, `__pycache__/`
+**Review process:** Review gate at every milestone boundary except M0 (mechanical). Reward changes after M3 require a written proposal before implementation. `/code-review` may be run on diffs; human review precedes any merge to `master`.
+
+**Reproducibility bar:** Every verified milestone must pass its mechanical verifier from a clean clone (after the editable install), not just the working tree. Training metrics are stochastic — the success bar is judged on a representative run, not bit-reproducibility.
 
 ---
 
-## 6. Phased Plan
+## 8. Risks & Open Questions
 
-The project is divided into phases. Do not start phase N+1 until phase N's deliverable is met.
+### Risks
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Version drift (PyTorch 2.9 / CUDA 13 very recent) breaks a tutorial-following step | M | M | Treat version drift as first hypothesis; pin versions in §4; log gotchas via `/retro` to knowledge base |
+| aarch64 feature gap blocks a needed Isaac Sim capability | M | M | §3 lists known-unsupported features; check aarch64 support before adopting any new tool/feature |
+| Stochastic RL run misses success bar despite correct code | M | L | Two-tier verifier separates "pipeline works" from "metric met"; re-run/seed-vary before assuming a bug |
+| Reward change mid-project invalidates prior experiments | L | H | Reward locked after M3; changes need a proposal + Decision Log row; one concept per run |
+| SSH drop kills a long run | M | H | tmux mandatory for >2-min processes (NFR-2) |
+| Sim-to-real gap (idealized wrench vs real actuator/sensor) | H | M | Out of scope here; addressed by M4–M6 domain randomization and deferred hardware spec |
+| Accidental commit of checkpoints/logs/videos | L | M | `.gitignore` (NFR-5); `git status` checked before every push |
 
-### Phase 1: Sim foundations (~weeks 1-2)
-**Goal:** Validate the stack with stock Isaac Lab tasks.
-
-**Tasks:**
-- [ ] Train `Isaac-Cartpole-Direct-v0` headlessly to completion. Verify TensorBoard reward curve climbs.
-- [ ] Train `Isaac-Quadcopter-Direct-v0` headlessly for 5000+ iterations. Verify hover behavior.
-- [ ] Record an MP4 of the trained quadcopter policy. Inspect visually.
-- [ ] Set up W&B logging integrated with RSL-RL.
-- [ ] Initialize Git repo, push to GitHub.
-
-**Deliverable:** Trained stock quadcopter policy, TensorBoard + W&B both logging, video of hover.
-
-### Phase 2: Source code deep dive (~week 3)
-**Goal:** Understand the stock quadcopter env line by line. **No new code in this phase.**
-
-**Tasks:**
-- [x] Read `quadcopter_env_cfg.py` end to end. Document each config field in `NOTES.md`. *(Direct env — config is `QuadcopterEnvCfg` inside `quadcopter_env.py`; no separate cfg file.)*
-- [x] Read `quadcopter_env.py`. Document each method's purpose in `NOTES.md`.
-- [x] Locate and read `CRAZYFLIE_CFG` in `isaaclab_assets`. Note mass, inertia, motor model.
-- [x] Read `agents/rsl_rl_ppo_cfg.py`. List which hyperparameters exist (don't tune yet).
-- [x] Answer in `NOTES.md`: how is thrust modeled? What's the action space? What termination conditions exist?
-
-**Deliverable:** A 1-2 page summary in `NOTES.md` that explains the stock env from first principles.
-
-### Phase 3: Custom hover env (~week 4)
-**Goal:** Hand-built minimal hover environment, training to convergence.
-
-**Tasks:**
-- [ ] Copy stock quadcopter env to `envs/crazyflie_hover/`. Rename classes, strip unused code.
-- [ ] Reward function: dense, 3 terms max — `reward_position` (Gaussian around origin), `reward_orientation` (penalize tilt), `reward_action` (small action penalty).
-- [ ] Observations: position (3), linear velocity (3), orientation as quaternion (4), angular velocity (3). 13 floats.
-- [ ] Actions: 4 motor thrust commands, normalized to [-1, 1].
-- [ ] Register env via Gym. Confirm it loads with `--headless`.
-- [ ] Train to convergence. Define success: drone stays within 0.5m of origin for 95% of an evaluation episode.
-
-**Deliverable:** Trained custom hover policy in `checkpoints/`, video showing stable hover, EXPERIMENTS.md log of the run.
-
-### Phase 4: Domain randomization (~week 5)
-**Goal:** Robust hover policy that survives sim-to-real reality gap.
-
-**Add these one at a time. Retrain and verify after each.**
-
-- [ ] Random initial pose and velocity within reasonable bounds
-- [ ] Mass randomization: ±20% of nominal Crazyflie mass (~27g ± 5g)
-- [ ] Per-motor strength randomization: ±15%
-- [ ] External force perturbations during episodes (simulated wind/touch)
-- [ ] Observation noise: Gaussian noise on position (σ=2cm) and orientation
-- [ ] Action latency: apply action 1 timestep late
-- [ ] Center-of-mass random offset: ±5mm in each axis
-
-**Deliverable:** Hover policy that recovers from all perturbations above. Video evidence.
-
-### Phase 5: Waypoint following (~weeks 6-7)
-**Goal:** Drone tracks a sequence of 3D goal positions provided by an external command.
-
-**Tasks:**
-- [ ] Extend observation space to include relative goal position (3 floats).
-- [ ] Modify reward: dense distance-to-goal reward, success bonus on reaching waypoint (within 0.2m for 1s).
-- [ ] Implement goal resampling: new random goal in workspace whenever current goal reached, or every N steps.
-- [ ] Define workspace: 4m × 4m × 3m volume (matches small indoor flight space).
-- [ ] All randomization from Phase 4 stays active.
-- [ ] Define success: drone reaches sequence of 10 random waypoints in < 60s of simulated time, 90% success rate.
-
-**Deliverable:** Trained waypoint-following policy. Video of policy flying a known waypoint sequence (e.g., a square or figure-8).
-
-### Phase 6: Obstacle avoidance (~weeks 8-11)
-**Goal:** Drone avoids static obstacles while still reaching waypoints.
-
-**Tasks:**
-- [ ] Add a Multiranger-like sensor to the sim Crazyflie: 5 ray-cast rangefinders (front, back, left, right, up). Output: 5 distances, clipped to e.g. 4m.
-- [ ] Extend observations: + 5 floats (rangefinder distances).
-- [ ] Place static obstacles in the env: boxes, walls, pillars. Randomize positions per episode.
-- [ ] Reward: keep waypoint reward, add penalty for proximity to obstacles (smooth, not just collision), large penalty for actual collision.
-- [ ] Termination on collision.
-- [ ] Define success: 80% completion rate on procedurally-generated obstacle courses with 5+ obstacles.
-
-**Deliverable:** Trained obstacle-avoiding waypoint-following policy. Video of policy navigating a procedurally-generated course.
-
-### Phase 7: Decision point
-**Not a coding phase.** Re-evaluate whether to proceed to hardware (Phase 8), do more sim work (refine, harder tasks), or stop.
-
-### Phase 8: Sim-to-real (hardware, separate spec)
-Out of scope for this document. A separate `SPEC_HARDWARE.md` will be written when Phase 7 decision is "proceed."
+### Open questions
+| Question | Must resolve before | Owner |
+|---|---|---|
+| M3 wrap-up still pending: record hover video, confirm sustained 95%-in-0.5 m eval, add EXPERIMENTS.md row, tag `v0.3-hover-custom-env` | M4 | Daron |
+| Headless video-recording cadence (every N iters vs on-demand) | M4 | Daron |
+| Is W&B ever wired up, or permanently optional? (`WANDB_API_KEY` needed if yes) | M7 | Daron |
+| Exact Crazyflie firmware version + setpoint interface for sim-to-real | M9 | Daron |
+| Positioning approach for hardware (Lighthouse vs alternative) | M9 | Daron |
+| Network architecture — stay on RSL-RL MLP or explore? | revisit only if performance plateaus | Daron |
 
 ---
 
-## 7. Workflow Conventions for Claude Code
+## 9. Agent Operating Notes
 
-### Autonomy mode: Co-pilot
-- Claude Code MAY execute individual tasks autonomously: edit files, run training scripts, run tests, search the codebase, read documentation.
-- Claude Code MUST get user approval before:
-  - Starting a new phase
-  - Adding a new dependency
-  - Significantly changing the env's observation or action space
-  - Modifying the reward function (after Phase 3 — propose changes, don't just make them)
-  - Deleting or renaming files outside its own working scratch
-  - Spending Spark GPU time on a training run > 30 minutes
-- Claude Code SHOULD propose plans (Shift+Tab plan mode or equivalent) before multi-file changes.
-
-### Per-session rituals
-1. Start every session by reading this SPEC.md, then NOTES.md and EXPERIMENTS.md if relevant.
-2. Confirm the current phase before suggesting work.
-3. End each session by updating EXPERIMENTS.md if a training run was attempted, and NOTES.md if a concept was learned.
-
-### Mandatory practices
-- **tmux** for any process expected to run > 2 minutes. Never block the session on a long process.
-- **--headless** on every Isaac Lab invocation.
-- **Verify before declaring done.** If a change should make hover work, run a short training and confirm reward improves.
-- **One concept per training run.** Don't change reward AND randomization AND hyperparameters in one run — debugging will be impossible.
-
-### Forbidden practices
-- Running Isaac Sim in GUI mode on the Spark (will hang or burn CPU on software rendering)
-- Hardcoding paths that vary per machine (use env vars or config)
-- Committing trained checkpoints, logs, videos, or W&B caches to Git
-- Adding reward terms without recording them in EXPERIMENTS.md
-- Hyperparameter tuning before Phase 4 — env correctness first
-- Implementing features beyond the current phase
+- Pipeline mechanics (skills, `~/knowledge-base/`, memory, `/retro`, `/permissions-interview`) are governed by global `~/.claude/CLAUDE.md` — follow it; this spec does not restate it.
+- **Per-session ritual:** read CLAUDE.md → read this SPEC → check EXPERIMENTS.md for the last run → confirm the current milestone before suggesting work.
+- Always pass `--headless`; always run >2-min commands in `tmux`.
+- **Reward function is locked after M3** — propose changes in chat first; never edit silently.
+- One concept per training run (reward XOR randomization XOR hyperparameters).
+- Do not start a new milestone without owner approval. Do not spend >30 min of GPU time on a run without approval.
+- When a verifier fails twice for the same cause, or you hit an open question from §8: stop, summarize, ask. Do not redesign around the obstacle.
+- Update EXPERIMENTS.md after any run; update NOTES.md when a concept is learned. Run `/retro` before ending a session that closes a milestone or does significant work.
+- Do not modify this spec's milestones, scope, or stack without logging it in §10 and getting owner approval.
 
 ---
 
-## 8. Reward Design Philosophy
+## 10. Decision Log
 
-**Hover and waypoint:** dense rewards. Composite of multiple small terms. Train fast, fine-tune the policy.
-
-**Obstacle avoidance:** sparser. Heavy penalty for collision, lighter shaping rewards for clearance. Avoid micromanaging trajectory.
-
-**Always:**
-- Reward terms expressed as named functions, not anonymous arithmetic
-- Weights stored in env config, never literals in env code
-- Each reward term logged separately to TensorBoard / W&B for diagnostics
-
----
-
-## 9. Definitions of Done (per phase)
-
-For each phase, "done" means all three:
-
-1. **Functional:** the deliverable runs and produces the expected behavior
-2. **Documented:** EXPERIMENTS.md updated, NOTES.md updated with anything learned
-3. **Versioned:** Git commit with descriptive message; tag if it's a phase boundary
-
----
-
-## 10. Open Questions / Decisions Deferred
-
-Tracked here so they don't get lost. Update as decisions are made.
-
-- **Exact Crazyflie firmware version for eventual sim-to-real:** decide at end of Phase 7
-- **Lighthouse vs. alternative positioning:** Lighthouse is the plan, revisit if Bitcraze releases something better
-- **W&B project sharing:** private by default; reconsider if collaborating
-- **Headless video recording cadence:** every N iterations vs. on-demand only — decide in Phase 1
-- **Network architecture:** default to RSL-RL's MLP for now; revisit if performance plateaus
-
----
-
-## 11. References
-
-- [Isaac Lab documentation](https://isaac-sim.github.io/IsaacLab/)
-- [Isaac Sim 5.1 docs](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/)
-- [Arm DGX Spark + Isaac Lab learning path](https://learn.arm.com/learning-paths/laptops-and-desktops/dgx_spark_isaac_robotics/)
-- [Bitcraze Crazyflie documentation](https://www.bitcraze.io/documentation/)
-- [RSL-RL repository](https://github.com/leggedrobotics/rsl_rl)
-- [Davide Scaramuzza's Robotics & Perception Group](https://rpg.ifi.uzh.ch/publications.html) — academic benchmark for drone autonomy
-
----
-
-*Spec last verified: project start. Update §3 "Verified Configuration" whenever Isaac Sim, Isaac Lab, or core dependencies are upgraded.*
+| Date | Change | Reason | Approved by |
+|---|---|---|---|
+| 2026-06-16 | Migrated phase-based spec → milestone/verifier template via `/spec-interview`; archived original as `Old_SPEC.md` | Compatibility with new Claude Code pipeline; add executable verifiers | Daron |
+| 2026-06-16 | Mapped 8 phases → M0–M9; split domain randomization into M4–M6 | Each milestone independently verifiable; DR too large for one | Daron |
+| 2026-06-16 | Demoted W&B from required tracker to optional/Future work | Never wired up; TensorBoard has covered all needs | Daron |
+| 2026-06-16 | Corrected custom-env path `envs/crazyflie_hover/` → `source/crazyflie_hover/`; standardized tags on descriptive `v0.x-<descriptor>` | Match actual repo layout and git history | Daron |

@@ -16,7 +16,7 @@ This file is auto-loaded into every Claude Code session. Keep it short. Put deta
 - **Isaac Sim:** `~/IsaacSim/`, with `$ISAACSIM_PATH` = `~/IsaacSim/_build/linux-aarch64/release`.
 - **Bundled Python:** `~/IsaacLab/_isaac_sim/python.sh`
 
-See SPEC.md §3 for the full verified configuration table including driver and git commits.
+See SPEC.md §4 (Stack) for the full verified configuration table including driver and git commits.
 
 ---
 
@@ -25,8 +25,8 @@ See SPEC.md §3 for the full verified configuration table including driver and g
 1. **Always pass `--headless` to Isaac Lab scripts.** Livestream is not supported on aarch64. GUI mode hangs or burns CPU forever.
 2. **Always run long commands in tmux.** Anything expected to take more than 2 minutes — builds, training, downloads. SSH drops will kill non-tmux processes and waste work.
 3. **Never commit `checkpoints/`, `logs/`, `videos/`, `wandb/`, or `*.pth`.** Use the gitignore.
-4. **Never start a new project phase without user approval.** Phases are defined in SPEC.md §6.
-5. **Never modify the reward function after Phase 3 without proposing the change first.** Reward changes invalidate prior experiments.
+4. **Never start a new milestone without user approval.** Milestones (M0–M9) are defined in SPEC.md §6. (These were the old "phases"; the spec migrated to a milestone/verifier format on 2026-06-16.)
+5. **Never modify the reward function after M3 (custom hover env) without proposing the change first.** Reward changes invalidate prior experiments.
 6. **One concept per training run.** Don't change reward + randomization + hyperparameters together — debugging becomes impossible.
 7. **No GUI mode for Isaac Sim on the Spark.** Use NoMachine for occasional GUI needs (set up separately, not in this project).
 
@@ -37,7 +37,7 @@ See SPEC.md §3 for the full verified configuration table including driver and g
 1. Read this file (you're doing it).
 2. Read `SPEC.md` (or skim, if you've read it recently in this conversation).
 3. Check `EXPERIMENTS.md` for the most recent training run.
-4. Confirm the current phase before suggesting work.
+4. Confirm the current milestone before suggesting work.
 5. If user asks for code on a multi-file change, propose a plan first (Shift+Tab plan mode).
 6. End the session by updating `EXPERIMENTS.md` (if a run happened) and `NOTES.md` (if a concept was learned).
 
@@ -85,6 +85,7 @@ print(f'isaaclab: {isaaclab.__version__}')"
 ## Documentation files in this project
 
 - **SPEC.md** — full project description. The source of truth.
+- **Old_SPEC.md** — archived original phase-based spec. History only; superseded by SPEC.md.
 - **CLAUDE.md** — this file. Quick orientation.
 - **NOTES.md** — conceptual notes the user takes as they learn.
 - **SETUP_NOTES.md** — install commands actually run, gotchas hit, version pins.

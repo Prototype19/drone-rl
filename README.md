@@ -31,21 +31,21 @@ This repo holds project docs, custom Isaac Lab environments, and training config
 
 ## Status
 
-**Phase 1 — Sim foundations.** Validating the stack against stock Isaac Lab tasks (cartpole, then the bundled quadcopter env) before any custom environment work.
+**Custom hover env (milestone M3).** Sim foundations are validated and the stock quadcopter trains to a stable hover; the project-owned `Isaac-Crazyflie-Hover-Direct-v0` env is built and has converged, with wrap-up (eval/video/tag) in progress.
 
-The project is structured in phases (§6 of the spec): sim foundations → source deep-dive → custom hover env → domain randomization → waypoint following → obstacle avoidance → sim-to-real decision. Each phase has its own deliverable and exit criteria.
+The work is organized as verifiable milestones (§6 of the spec): environment validation → stock quadcopter → source deep-dive → custom hover env → domain randomization → waypoint following → obstacle avoidance → sim-to-real decision. Each milestone has an executable verifier and a success bar.
 
 ## Repository layout
 
 ```
 SPEC.md          Source of truth — read first
+Old_SPEC.md      Archived original phase-based spec (superseded by SPEC.md)
 CLAUDE.md        Orientation for Claude Code sessions
 NOTES.md         Conceptual notes as the project progresses
 SETUP_NOTES.md   Install commands, version pins, gotchas
 EXPERIMENTS.md   One line per training run
-envs/            Custom Isaac Lab environments (added in Phase 3+)
+source/          Custom Isaac Lab env as an editable extension (crazyflie_hover/)
 scripts/         Thin wrappers around Isaac Lab train/play
-configs/         Per-experiment configs
 ```
 
 `checkpoints/`, `logs/`, `videos/`, and `wandb/` are gitignored.
