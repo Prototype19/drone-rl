@@ -201,7 +201,7 @@ cd ~/spark-dev-workspace/drone-rl
 - **Checkpoint:** docs commit (no version tag; no code change)
 
 ### M3 — Custom fixed-goal hover env
-- **Status:** ◐ (env built/trained/converged; wrap-up pending — see §8)
+- **Status:** ☑ (reward 146.12, final_distance 0.00452 m, died=0, full episodes; video recorded — tag `v0.3-hover-custom-env`)
 - **Objective:** Project-owned `Isaac-Crazyflie-Hover-Direct-v0` registers, loads headless, and trains to convergence on a fixed hover point.
 - **Deliverables:** `source/crazyflie_hover/` extension; `scripts/train.py` + `scripts/play.py`; trained checkpoint; hover MP4; EXPERIMENTS.md row.
 - **Depends on:** M2
@@ -340,7 +340,6 @@ cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.p
 ### Open questions
 | Question | Must resolve before | Owner |
 |---|---|---|
-| M3 wrap-up still pending: record hover video, confirm sustained 95%-in-0.5 m eval, add EXPERIMENTS.md row, tag `v0.3-hover-custom-env` | M4 | Daron |
 | Headless video-recording cadence (every N iters vs on-demand) | M4 | Daron |
 | Is W&B ever wired up, or permanently optional? (`WANDB_API_KEY` needed if yes) | M7 | Daron |
 | Exact Crazyflie firmware version + setpoint interface for sim-to-real | M9 | Daron |
@@ -371,3 +370,4 @@ cd ~/IsaacLab && ./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/train.p
 | 2026-06-16 | Mapped 8 phases → M0–M9; split domain randomization into M4–M6 | Each milestone independently verifiable; DR too large for one | Daron |
 | 2026-06-16 | Demoted W&B from required tracker to optional/Future work | Never wired up; TensorBoard has covered all needs | Daron |
 | 2026-06-16 | Corrected custom-env path `envs/crazyflie_hover/` → `source/crazyflie_hover/`; standardized tags on descriptive `v0.x-<descriptor>` | Match actual repo layout and git history | Daron |
+| 2026-06-17 | M3 verified ☑ (reward 146.12, final_distance 0.00452 m, died=0, hover video recorded); M3 open question closed | Wrap-up complete; ready to tag `v0.3-hover-custom-env` | Daron |

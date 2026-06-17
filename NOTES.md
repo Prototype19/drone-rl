@@ -141,26 +141,27 @@ These are the knobs available for Phase 4+ tuning; per the SPEC we do **not** to
 
 ---
 
-## Next session — Phase 3 wrap-up (handoff, written 2026-06-10 ~00:25 PT, mid-run)
+## Session Handoff — 2026-06-17 (Phase 3 / Milestone M3 COMPLETE ✅)
 
-**Phase 3 is ~90% done. The custom hover env is built, committed, and training. Only the wrap-up (video / eval / EXPERIMENTS / commit / tag) remains.** Do NOT start Phase 4 without user approval.
+**For the next session: M3 (custom fixed-goal hover env) is done and ready to tag `v0.3-hover-custom-env`. Do NOT start M4 (domain randomization) without user approval.**
 
-### What's done
-- Custom task `Isaac-Crazyflie-Hover-Direct-v0` built as a project-owned external extension in `source/crazyflie_hover/` (+ launchers `scripts/train.py`, `scripts/play.py`). Faithful copy of the stock quadcopter env, **fixed-goal hover** (env-origin xy, z=1.0) the only deviation. **Committed: `d2384e3`** (not yet pushed). Installed editable into the Isaac Lab Python (`pip install -e`), so it's importable for train/play.
-- Training launched 2026-06-10 00:08 PT in **tmux `train`**: 4096 envs, **3000 iters**, headless.
-  - **Log dir (durable):** `~/IsaacLab/logs/rsl_rl/crazyflie_hover/2026-06-10_00-08-59/` (checkpoints every 50; final will be `model_2999.pt`).
-  - Tee log (may vanish on reboot): `/tmp/cf_hover_train.log`.
-  - **Already converged by ~iter 580:** mean reward **≈146.9**, `final_distance_to_goal` **≈0.0016 m** (vs Phase 1's 0.083 m — tighter because the goal is fixed). Rest of the run just holds flat.
+### M3 deliverables — all met
+- ✅ Custom task `Isaac-Crazyflie-Hover-Direct-v0` — project-owned external extension in `source/crazyflie_hover/` (+ launchers `scripts/train.py`, `scripts/play.py`), installed editable into the Isaac Lab Python. Faithful copy of the stock quadcopter env; **fixed-goal hover** (env-origin xy, z=1.0) the only deviation. Env code committed `d2384e3`.
+- ✅ Trained to convergence: 4096 envs, 3000 iters, headless. Converged by ~iter 580, flat after. **Final: mean reward 146.12, `final_distance_to_goal` 0.00452 m, `died`=0.0, `ep_len` 499 (full episodes).** Final checkpoint `model_2999.pt`. Log dir `~/IsaacLab/logs/rsl_rl/crazyflie_hover/2026-06-10_00-08-59/`.
+- ✅ Success bar (within 0.5 m of the hover point for 95% of an eval episode) **passed with huge margin, and confirmed sustained** — the episode-averaged `distance_to_goal` reward is **14.69 of a 15 max**, meaning the drone is essentially on the goal across the *whole* episode, not just at the final step (final_distance is only the terminal sample).
+- ✅ Hover video recorded 2026-06-17: `logs/rsl_rl/crazyflie_hover/2026-06-10_00-08-59/videos/play/rl-video-step-0.mp4` (1280x720, 50 fps, 299 frames, ~6 s).
+- ✅ EXPERIMENTS.md row added.
 
-### Wrap-up TODO (resume here)
-1. **Confirm it finished:** `grep TRAIN_EXIT /tmp/cf_hover_train.log` (want `=0`), or check newest `model_*.pt` in the log dir is `model_2999.pt`. If tmux `train` is still alive, capture final reward then `tmux kill-session -t train`; verify GPU is free (`nvidia-smi`).
-2. **Record hover video:** `./isaaclab.sh -p ~/spark-dev-workspace/drone-rl/scripts/play.py --task Isaac-Crazyflie-Hover-Direct-v0 --num_envs 16 --headless --video --video_length 300` (in tmux).
-3. **Evaluate success bar:** within **0.5 m of the hover point for 95%** of an eval episode. final_distance ≈0.0016 m → passes with huge margin, but confirm it's *sustained* (whole episode), not just terminal.
-4. **Log EXPERIMENTS.md:** new top row — date, `Isaac-Crazyflie-Hover-Direct-v0`, 4096 envs/3000 iters, final reward, final_distance, ✅ outcome, log dir. Match existing format.
-5. **Update NOTES:** replace this "Next session" block with a Phase 3 COMPLETE handoff + any concept learned (e.g. fixed-goal converges far faster/tighter than random-goal).
-6. **Commit docs** (show user first), then **tag the boundary `v0.3-hover-custom-env`** per CLAUDE.md, and **push** (use the `gh` HTTPS fallback if ssh-agent isn't loaded — see memory).
-7. Phase 3 done → **ask user before starting Phase 4 (domain randomization).**
+### Gotcha hit during wrap-up
+- Stock rsl_rl `play.py` treats `--checkpoint` as a **direct file path**, not a basename within `--load_run`. Passing `--checkpoint model_2999.pt` → `FileNotFoundError`; pass the **full path** (`.../2026-06-10_00-08-59/model_2999.pt`) instead. The `renderD128 (VK_ERROR_INCOMPATIBLE_DRIVER)` line above it in the log is the known-benign aarch64 Vulkan probe, not the cause.
+
+### Remaining for next session
+- Commit these docs (show user first), then **tag `v0.3-hover-custom-env`** per CLAUDE.md, and push (use the `gh` HTTPS fallback if ssh-agent isn't loaded — see memory).
+- **Ask user before starting M4 (domain randomization).**
+
+### Concept learned — fixed-goal vs random-goal hover
+- The custom env's only change from stock is a **fixed** hover target instead of a per-reset random goal. Effect: convergence is **faster and tighter** — converged by ~iter 580 to `final_distance_to_goal` ~4.5 mm, vs the stock random-goal env's ~83 mm in Phase 1. Intuition: a fixed goal removes the goal-generalization burden, so the policy can overfit a single setpoint to near-zero steady-state error. The trade-off (deferred): this policy only knows one hover point; M7 (waypoint following) reintroduces goal generalization on purpose.
 
 ### Reminders
-- ⚠️ Per CLAUDE.md rule #5, the reward function is now **LOCKED** after Phase 3 — any change needs a proposal first.
-- W&B logging still deferred (needs user's API key as env var).
+- ⚠️ Per CLAUDE.md rule #5, the reward function is now **LOCKED** after M3 — any change needs a proposal first.
+- W&B logging still optional/deferred (needs user's API key as env var) — now demoted to optional in SPEC §2 Future work.

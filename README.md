@@ -31,7 +31,7 @@ This repo holds project docs, custom Isaac Lab environments, and training config
 
 ## Status
 
-**Custom hover env (milestone M3).** Sim foundations are validated and the stock quadcopter trains to a stable hover; the project-owned `Isaac-Crazyflie-Hover-Direct-v0` env is built and has converged, with wrap-up (eval/video/tag) in progress.
+**Custom hover env complete (milestone M3 ✅).** Sim foundations are validated, the stock quadcopter trains to a stable hover, and the project-owned `Isaac-Crazyflie-Hover-Direct-v0` env trains to a tight fixed-goal hover (final distance ~4.5 mm, zero crashes, video recorded). Domain randomization (M4) is next.
 
 The work is organized as verifiable milestones (§6 of the spec): environment validation → stock quadcopter → source deep-dive → custom hover env → domain randomization → waypoint following → obstacle avoidance → sim-to-real decision. Each milestone has an executable verifier and a success bar.
 
