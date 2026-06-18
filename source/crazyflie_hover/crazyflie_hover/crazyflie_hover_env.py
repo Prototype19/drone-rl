@@ -12,6 +12,13 @@
 # Observation (12-D ego-centric), action (1 thrust + 3 moments), reward (3 terms)
 # and all scales are IDENTICAL to the stock env. Per CLAUDE.md rule #5 the reward
 # locks after this phase.
+#
+# M4 (domain randomization #1) adds per-env, config-gated randomization of init
+# state, mass, and "motor" strength (a thrust gain + constant moment bias -- the
+# wrench-level analog of uneven motors in this collective-thrust env). All three
+# toggles default to False; with them off this env is byte-for-byte the M3 hover
+# env. The reward is untouched (still locked). Per SPEC M4 / CLAUDE.md rule #6 the
+# toggles are enabled ONE AT A TIME across separate retrains.
 
 from __future__ import annotations
 
@@ -26,7 +33,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.math import subtract_frame_transforms
+from isaaclab.utils.math import quat_from_euler_xyz, subtract_frame_transforms
 
 ##
 # Pre-defined configs
@@ -90,6 +97,33 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     ang_vel_reward_scale = -0.01
     distance_to_goal_reward_scale = 15.0
 
+    # --- M4 domain randomization (#1) ---------------------------------------
+    # Enabled ONE AT A TIME across separate retrains (SPEC M4 "add one at a time,
+    # retrain after each"; CLAUDE.md rule #6 "one concept per training run").
+    # Flip the toggles per run; the final M4 checkpoint has all three True.
+    # Run 1: init_state. Run 2: + mass. Run 3: + motor.
+    randomize_init_state: bool = True   # M4 run 1: init-state randomization
+    randomize_mass: bool = True         # M4 run 2: + mass +/-20%
+    randomize_motor: bool = False
+
+    # init-state ranges, applied at reset when randomize_init_state.
+    init_pos_xy_range = 0.5        # m, +/- offset about the env origin (xy)
+    init_pos_z_range = (0.5, 1.5)  # m, absolute spawn-height band (inside the
+    #                                0.1-2.0 m termination bounds, around hover_height)
+    init_tilt_range = 0.2         # rad, +/- roll & pitch (~11 deg); yaw is U(-pi, pi)
+    init_lin_vel_range = 0.5      # m/s, +/- per axis
+    init_ang_vel_range = 0.5      # rad/s, +/- per axis
+
+    # mass randomization, when randomize_mass: scale total mass by U(1-r, 1+r),
+    # inertia scaled by the same ratio.
+    mass_scale_range = 0.20       # +/-20% (~27 g +/- 5.4 g)
+
+    # "per-motor strength" in this wrench-controlled env, when randomize_motor:
+    # a per-env collective-thrust gain + a constant per-env body-moment bias
+    # (uneven motors -> lift loss + a steady trim torque the policy must counter).
+    motor_thrust_gain_range = 0.15   # +/-15% on applied collective thrust
+    motor_moment_bias_scale = 0.15   # constant bias up to 15% of moment_scale
+
 
 class CrazyflieHoverEnv(DirectRLEnv):
     cfg: CrazyflieHoverEnvCfg
@@ -101,6 +135,11 @@ class CrazyflieHoverEnv(DirectRLEnv):
         self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
         self._thrust = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._moment = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        # M4 motor randomization: per-env thrust gain (x collective thrust) and a
+        # constant per-env body-moment bias. Defaults (1.0 / 0.0) reproduce the
+        # baseline wrench exactly when randomize_motor is False.
+        self._thrust_gain = torch.ones(self.num_envs, 1, device=self.device)
+        self._moment_bias = torch.zeros(self.num_envs, 3, device=self.device)
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
@@ -140,8 +179,10 @@ class CrazyflieHoverEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
+        self._thrust[:, 0, 2] = (
+            self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
+        ) * self._thrust_gain[:, 0]
+        self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:] + self._moment_bias
 
     def _apply_action(self):
         self._robot.permanent_wrench_composer.set_forces_and_torques(
@@ -217,14 +258,87 @@ class CrazyflieHoverEnv(DirectRLEnv):
         # the stock per-episode random sample. This is the one task-level deviation.
         self._desired_pos_w[env_ids, :2] = self._terrain.env_origins[env_ids, :2]
         self._desired_pos_w[env_ids, 2] = self.cfg.hover_height
+
+        # M4: per-env domain randomization, resampled each reset. Each helper is a
+        # no-op when its cfg toggle is False (toggles enabled one at a time).
+        if self.cfg.randomize_mass:
+            self._randomize_mass(env_ids)
+        if self.cfg.randomize_motor:
+            self._randomize_motor(env_ids)
+
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]
-        default_root_state = self._robot.data.default_root_state[env_ids]
+        default_root_state = self._robot.data.default_root_state[env_ids].clone()
         default_root_state[:, :3] += self._terrain.env_origins[env_ids]
+        if self.cfg.randomize_init_state:
+            default_root_state = self._randomize_init_state(default_root_state, env_ids)
         self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+    def _rand(self, n: int, low: float, high: float) -> torch.Tensor:
+        """Sample an ``(n,)`` tensor uniformly from ``[low, high]`` on the sim device."""
+        return torch.empty(n, device=self.device).uniform_(low, high)
+
+    def _randomize_init_state(self, root_state: torch.Tensor, env_ids: torch.Tensor) -> torch.Tensor:
+        """Randomize spawn pose and velocity (M4 init-state randomization).
+
+        Overwrites the position, orientation, and velocity columns of ``root_state``
+        (shape ``(len(env_ids), 13)``) in place and returns it. Height is sampled as
+        an absolute band inside the termination bounds; xy is an offset about the env
+        origin.
+        """
+        n = len(env_ids)
+        origins = self._terrain.env_origins[env_ids]
+        # position: xy offset about the env origin, absolute z band
+        root_state[:, 0] = origins[:, 0] + self._rand(n, -self.cfg.init_pos_xy_range, self.cfg.init_pos_xy_range)
+        root_state[:, 1] = origins[:, 1] + self._rand(n, -self.cfg.init_pos_xy_range, self.cfg.init_pos_xy_range)
+        root_state[:, 2] = self._rand(n, self.cfg.init_pos_z_range[0], self.cfg.init_pos_z_range[1])
+        # orientation: small roll/pitch tilt, full-circle yaw
+        roll = self._rand(n, -self.cfg.init_tilt_range, self.cfg.init_tilt_range)
+        pitch = self._rand(n, -self.cfg.init_tilt_range, self.cfg.init_tilt_range)
+        yaw = self._rand(n, -torch.pi, torch.pi)
+        root_state[:, 3:7] = quat_from_euler_xyz(roll, pitch, yaw)
+        # velocity: small initial linear (7:10) and angular (10:13), world frame
+        root_state[:, 7:10] = self._rand(n * 3, -self.cfg.init_lin_vel_range, self.cfg.init_lin_vel_range).view(n, 3)
+        root_state[:, 10:13] = self._rand(n * 3, -self.cfg.init_ang_vel_range, self.cfg.init_ang_vel_range).view(n, 3)
+        return root_state
+
+    def _randomize_mass(self, env_ids: torch.Tensor) -> None:
+        """Scale each env's total mass by ``U(1-r, 1+r)`` (M4 mass randomization).
+
+        Mirrors Isaac Lab's ``randomize_rigid_body_mass`` event: randomization is
+        applied to the *default* mass/inertia so repeated resets don't compound, and
+        inertia is scaled by the same ratio. The thrust formula keeps using the
+        nominal weight, so a heavier drone has a lower effective thrust-to-weight --
+        the mismatch the policy must learn to absorb. PhysX mass/inertia views are
+        CPU-side, hence the ``.cpu()`` env ids.
+        """
+        ids_cpu = env_ids.cpu()
+        r = self.cfg.mass_scale_range
+        scale = torch.empty(len(ids_cpu), 1).uniform_(1.0 - r, 1.0 + r)
+        masses = self._robot.root_physx_view.get_masses()
+        masses[ids_cpu] = self._robot.data.default_mass.to("cpu")[ids_cpu] * scale
+        self._robot.root_physx_view.set_masses(masses, ids_cpu)
+        inertias = self._robot.root_physx_view.get_inertias()
+        inertias[ids_cpu] = self._robot.data.default_inertia.to("cpu")[ids_cpu] * scale[..., None]
+        self._robot.root_physx_view.set_inertias(inertias, ids_cpu)
+
+    def _randomize_motor(self, env_ids: torch.Tensor) -> None:
+        """Resample per-env thrust gain and constant moment bias (M4 motor DR).
+
+        The wrench-level analog of uneven motors in this collective-thrust env: a
+        +/-``motor_thrust_gain_range`` gain on applied thrust, plus a constant
+        body-moment bias up to ``motor_moment_bias_scale`` of ``moment_scale`` (a
+        steady trim torque the policy must counteract). Both are applied in
+        ``_pre_physics_step``.
+        """
+        n = len(env_ids)
+        r = self.cfg.motor_thrust_gain_range
+        self._thrust_gain[env_ids, 0] = self._rand(n, 1.0 - r, 1.0 + r)
+        bias = self.cfg.motor_moment_bias_scale * self.cfg.moment_scale
+        self._moment_bias[env_ids] = self._rand(n * 3, -bias, bias).view(n, 3)
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
