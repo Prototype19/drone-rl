@@ -104,7 +104,7 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     # Run 1: init_state. Run 2: + mass. Run 3: + motor.
     randomize_init_state: bool = True   # M4 run 1: init-state randomization
     randomize_mass: bool = True         # M4 run 2: + mass +/-20%
-    randomize_motor: bool = False
+    randomize_motor: bool = True        # M4 run 3: + motor strength +/-15%
 
     # init-state ranges, applied at reset when randomize_init_state.
     init_pos_xy_range = 0.5        # m, +/- offset about the env origin (xy)
