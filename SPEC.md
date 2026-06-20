@@ -216,7 +216,7 @@ cd ~/spark-dev-workspace/drone-rl
 - **Checkpoint:** `v0.3-hover-custom-env`
 
 ### M4 — Domain randomization #1 (init state, mass, motor strength)
-- **Status:** ☐
+- **Status:** ☑ (3 one-at-a-time retrains: init-state → +mass ±20% → +motor ±15%, all 3000 iters; final all-DR run reward 145.28, final_distance 0.0163 m, ep_len 499, died small-but-nonzero ~0.1/window; verifier exit 0 — tag `v0.4-domain-rand-1`)
 - **Objective:** Add init pose/velocity randomization, mass ±20% (~27 g ± 5 g), per-motor strength ±15%; hover stays robust. Add one at a time, retrain after each.
 - **Deliverables:** randomization ranges in env config; retrained checkpoint(s); EXPERIMENTS.md rows.
 - **Depends on:** M3
