@@ -231,7 +231,7 @@ cd ~/spark-dev-workspace/drone-rl
 - **Checkpoint:** `v0.4-domain-rand-1`
 
 ### M5 — Domain randomization #2 (force perturbations, observation noise)
-- **Status:** ☐
+- **Status:** ☑ (2 one-at-a-time retrains, both 3000 iters. Run 1 (force): reward ~142, final_distance 0.012–0.016 m, ep_len ~480–494, died ~0.12–0.25/window. Run 2 (+obs noise): reward ~140.7, final_distance 0.033–0.034 m, ep_len 499, died=0.0 — both hold <0.5 m with margin; verifier smoke run exit 0 with both toggles on — tag `v0.5-domain-rand-2`)
 - **Objective:** Add external force perturbations (simulated wind/touch) and Gaussian observation noise (position σ≈2 cm, orientation). One at a time, retrain after each.
 - **Deliverables:** config ranges; retrained checkpoint(s); EXPERIMENTS.md rows.
 - **Depends on:** M4
