@@ -42,3 +42,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieWaypointPPORunnerCfg",
     },
 )
+
+# M7 video variant: same env + policy, but the goal follows a fixed square path
+# (see CrazyflieWaypointSquareEnvCfg). Uses the SAME PPO runner cfg (experiment_name
+# "crazyflie_waypoint"), so `play.py --task ...-Square-... --load_run <waypoint run>`
+# loads the trained waypoint checkpoint and traces a known shape for the video.
+gym.register(
+    id="Isaac-Crazyflie-Waypoint-Square-Direct-v0",
+    entry_point="crazyflie_hover.crazyflie_waypoint_env:CrazyflieWaypointEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "crazyflie_hover.crazyflie_waypoint_env:CrazyflieWaypointSquareEnvCfg",
+        "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieWaypointPPORunnerCfg",
+    },
+)

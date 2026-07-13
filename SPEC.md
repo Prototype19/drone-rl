@@ -261,7 +261,7 @@ cd ~/spark-dev-workspace/drone-rl
 - **Checkpoint:** `v0.6-domain-rand-full`
 
 ### M7 — Waypoint following
-- **Status:** ☐
+- **Status:** ☑ (new task `Isaac-Crazyflie-Waypoint-Direct-v0`, 3000 iters. Moving goal in 4×4×3 m workspace resampling on reach (0.15 m) + discrete +10 success bonus; full M4–M6 randomization active. Result: reward ~250, **waypoints_reached ≈ 17 per 20 s episode** (a waypoint ~every 1.2 s) — clears the 10-in-<60 s / ≥90% bar with margin; ep_len ~972–999, died ~0.0–0.17/window. Known-path square video recorded (1280×720, 599 frames, scripted `Isaac-Crazyflie-Waypoint-Square-Direct-v0` variant on the same policy); smoke verifier exit 0. Reward change logged in §10 Decision Log — tag `v0.7-waypoint`)
 - **Objective:** Drone tracks a sequence of 3D goals: relative-goal observation, distance reward + success bonus, goal resampling, defined 4 m × 4 m × 3 m workspace, all M4–M6 randomization active.
 - **Deliverables:** extended env (obs += relative goal); modified reward (proposed first, per locked-reward rule); trained checkpoint; waypoint-flight video; EXPERIMENTS.md row.
 - **Depends on:** M6

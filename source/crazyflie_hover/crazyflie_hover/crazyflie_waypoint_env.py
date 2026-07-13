@@ -47,6 +47,26 @@ class CrazyflieWaypointEnvCfg(CrazyflieHoverEnvCfg):
     death_floor = 0.1               # m
     death_ceiling = 3.5             # m
 
+    # Optional scripted path for evaluation/video only: a sequence of (x, y, z)
+    # offsets about the env origin. When set, waypoints cycle through this list in
+    # order (advancing on reach) instead of random sampling, so the drone traces a
+    # known shape (e.g. a square) for the deliverable video. None -> random
+    # waypoints (training and random eval). Does not affect the trained policy.
+    eval_path: tuple | None = None
+
+
+@configclass
+class CrazyflieWaypointSquareEnvCfg(CrazyflieWaypointEnvCfg):
+    # Video variant: fly a fixed 3 m square at 1.5 m altitude (corners as offsets
+    # about the env origin). Loads the same trained waypoint policy (the task is
+    # goal-relative, so a scripted goal sequence needs no retraining).
+    eval_path = (
+        (1.5, 1.5, 1.5),
+        (1.5, -1.5, 1.5),
+        (-1.5, -1.5, 1.5),
+        (-1.5, 1.5, 1.5),
+    )
+
 
 class CrazyflieWaypointEnv(CrazyflieHoverEnv):
     cfg: CrazyflieWaypointEnvCfg
@@ -59,6 +79,11 @@ class CrazyflieWaypointEnv(CrazyflieHoverEnv):
         self._episode_sums["success_bonus"] = torch.zeros(self.num_envs, device=self.device)
         # Per-env count of waypoints reached this episode (logged at reset).
         self._waypoints_reached = torch.zeros(self.num_envs, dtype=torch.int, device=self.device)
+        # Scripted-path (video) state: per-env index into cfg.eval_path. Unused when
+        # eval_path is None (random waypoints).
+        self._path_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        if self.cfg.eval_path is not None:
+            self._eval_path = torch.tensor(self.cfg.eval_path, dtype=torch.float, device=self.device)
 
     def _sample_waypoint(self, env_ids: torch.Tensor) -> None:
         """Sample a fresh waypoint in the workspace for ``env_ids`` (M7).
@@ -66,8 +91,15 @@ class CrazyflieWaypointEnv(CrazyflieHoverEnv):
         xy is a uniform offset about the env origin; z is an absolute band. Used
         both at reset and mid-episode when a waypoint is reached.
         """
-        n = len(env_ids)
         origins = self._terrain.env_origins[env_ids]
+        # Scripted path (video): cycle to the next fixed offset for each env.
+        if self.cfg.eval_path is not None:
+            idx = self._path_idx[env_ids] % self._eval_path.shape[0]
+            self._desired_pos_w[env_ids] = origins + self._eval_path[idx]
+            self._path_idx[env_ids] += 1
+            return
+        # Random waypoint in the workspace (training / random eval).
+        n = len(env_ids)
         r = self.cfg.waypoint_xy_range
         self._desired_pos_w[env_ids, 0] = origins[:, 0] + self._rand(n, -r, r)
         self._desired_pos_w[env_ids, 1] = origins[:, 1] + self._rand(n, -r, r)
@@ -111,6 +143,8 @@ class CrazyflieWaypointEnv(CrazyflieHoverEnv):
             self._waypoints_reached[env_ids].float().mean().item()
         )
         # Replace the inherited fixed goal with a fresh workspace waypoint and clear
-        # the per-episode counter.
+        # the per-episode counters. Reset the scripted-path index first so a video
+        # episode starts at the first path point.
+        self._path_idx[env_ids] = 0
         self._sample_waypoint(env_ids)
         self._waypoints_reached[env_ids] = 0
