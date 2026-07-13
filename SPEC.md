@@ -246,7 +246,7 @@ cd ~/spark-dev-workspace/drone-rl
 - **Checkpoint:** `v0.5-domain-rand-2`
 
 ### M6 — Domain randomization #3 (action latency, CoM offset)
-- **Status:** ☐
+- **Status:** ☑ (2 one-at-a-time retrains, both 3000 iters. Run 1 (action latency): reward ~138.6, final_distance 0.036–0.038 m, ep_len 499, died ~0.04–0.08/window. Run 2 (+CoM offset ±5 mm/axis, full 7-perturbation suite): reward ~138.4, final_distance 0.033–0.035 m, ep_len 499, died=0.0 — holds <0.5 m under all seven perturbations. Perturbation-recovery video recorded (1280×720, 299 frames, all perturbations active); verifier smoke run exit 0 with both M6 toggles on — tag `v0.6-domain-rand-full`)
 - **Objective:** Add 1-timestep action latency and random center-of-mass offset (±5 mm/axis). Hover survives the full perturbation suite.
 - **Deliverables:** config ranges; final robust hover checkpoint; EXPERIMENTS.md rows; perturbation-recovery video.
 - **Depends on:** M5
