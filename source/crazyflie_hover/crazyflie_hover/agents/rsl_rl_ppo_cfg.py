@@ -37,3 +37,11 @@ class CrazyflieHoverPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class CrazyflieWaypointPPORunnerCfg(CrazyflieHoverPPORunnerCfg):
+    # M7 waypoint following: identical PPO hyperparameters to the hover runner
+    # (per the locked-hyperparameter convention), only the experiment name differs
+    # so waypoint logs/checkpoints land in their own directory.
+    experiment_name = "crazyflie_waypoint"

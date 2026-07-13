@@ -29,3 +29,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieHoverPPORunnerCfg",
     },
 )
+
+# M7: waypoint-following variant. Subclasses the hover env; tracks a sequence of
+# resampling 3D goals in a 4x4x3 m workspace with an added success bonus. See
+# crazyflie_waypoint_env.py.
+gym.register(
+    id="Isaac-Crazyflie-Waypoint-Direct-v0",
+    entry_point="crazyflie_hover.crazyflie_waypoint_env:CrazyflieWaypointEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "crazyflie_hover.crazyflie_waypoint_env:CrazyflieWaypointEnvCfg",
+        "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieWaypointPPORunnerCfg",
+    },
+)
