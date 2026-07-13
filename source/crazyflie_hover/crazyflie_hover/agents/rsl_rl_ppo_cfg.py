@@ -45,3 +45,9 @@ class CrazyflieWaypointPPORunnerCfg(CrazyflieHoverPPORunnerCfg):
     # (per the locked-hyperparameter convention), only the experiment name differs
     # so waypoint logs/checkpoints land in their own directory.
     experiment_name = "crazyflie_waypoint"
+
+
+@configclass
+class CrazyflieObstaclePPORunnerCfg(CrazyflieHoverPPORunnerCfg):
+    # M8 obstacle avoidance: same hyperparameters, own experiment directory.
+    experiment_name = "crazyflie_obstacle"

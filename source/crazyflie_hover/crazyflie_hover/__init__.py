@@ -56,3 +56,16 @@ gym.register(
         "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieWaypointPPORunnerCfg",
     },
 )
+
+# M8: obstacle-avoidance variant. Subclasses the waypoint env; adds per-env pillar
+# obstacles, a 5-ray MultiMeshRayCaster Multiranger (obs 12->17), a proximity
+# penalty, and collision termination. See crazyflie_obstacle_env.py.
+gym.register(
+    id="Isaac-Crazyflie-Obstacle-Direct-v0",
+    entry_point="crazyflie_hover.crazyflie_obstacle_env:CrazyflieObstacleEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "crazyflie_hover.crazyflie_obstacle_env:CrazyflieObstacleEnvCfg",
+        "rsl_rl_cfg_entry_point": "crazyflie_hover.agents.rsl_rl_ppo_cfg:CrazyflieObstaclePPORunnerCfg",
+    },
+)
