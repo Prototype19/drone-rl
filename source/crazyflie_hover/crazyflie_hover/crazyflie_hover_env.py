@@ -124,6 +124,25 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     motor_thrust_gain_range = 0.15   # +/-15% on applied collective thrust
     motor_moment_bias_scale = 0.15   # constant bias up to 15% of moment_scale
 
+    # --- M5 domain randomization (#2) ---------------------------------------
+    # Cumulative on top of M4 (all three M4 toggles stay True); enabled ONE AT A
+    # TIME across separate retrains (CLAUDE.md rule #6). Run 1: force. Run 2: + noise.
+    randomize_force: bool = True    # M5 run 1: external force perturbations
+    observe_noise: bool = False     # M5 run 2: Gaussian observation noise (off for run 1)
+
+    # force perturbation, when randomize_force: a body-frame disturbance force =
+    # sustained per-episode "wind" (resampled each reset) + occasional impulse
+    # "gust/touch" kicks (sampled per step). Magnitudes are fractions of the
+    # robot weight, applied alongside the control thrust in _pre_physics_step.
+    force_wind_scale = 0.15         # sustained wind, U(0, this) x weight, random dir
+    force_impulse_scale = 0.30      # impulse kick, U(0, this) x weight, random dir
+    force_impulse_prob = 0.01       # per-step probability of an impulse (~5/episode)
+
+    # observation noise, when observe_noise: Gaussian noise added to the obs.
+    obs_pos_noise_std = 0.02        # m, on goal-relative position (desired_pos_b)
+    obs_grav_noise_std = 0.02       # on the unit gravity direction, then renormalized
+    #                                 (~1-2 deg orientation noise)
+
 
 class CrazyflieHoverEnv(DirectRLEnv):
     cfg: CrazyflieHoverEnvCfg
@@ -140,6 +159,10 @@ class CrazyflieHoverEnv(DirectRLEnv):
         # baseline wrench exactly when randomize_motor is False.
         self._thrust_gain = torch.ones(self.num_envs, 1, device=self.device)
         self._moment_bias = torch.zeros(self.num_envs, 3, device=self.device)
+        # M5 force perturbation: per-env sustained "wind" force (body frame),
+        # resampled each reset. Zero reproduces the baseline when randomize_force
+        # is False. Impulse "gust/touch" kicks are sampled per step.
+        self._wind_force = torch.zeros(self.num_envs, 3, device=self.device)
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
@@ -183,6 +206,8 @@ class CrazyflieHoverEnv(DirectRLEnv):
             self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
         ) * self._thrust_gain[:, 0]
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:] + self._moment_bias
+        if self.cfg.randomize_force:
+            self._apply_force_perturbation()
 
     def _apply_action(self):
         self._robot.permanent_wrench_composer.set_forces_and_torques(
@@ -193,11 +218,19 @@ class CrazyflieHoverEnv(DirectRLEnv):
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_pos_w, self._robot.data.root_quat_w, self._desired_pos_w
         )
+        grav_b = self._robot.data.projected_gravity_b
+        # M5 observation noise: Gaussian on the position-like (goal-relative) and
+        # orientation-like (gravity direction) channels. No-op when observe_noise
+        # is False, so obs is byte-for-byte the M4 obs.
+        if self.cfg.observe_noise:
+            desired_pos_b = desired_pos_b + torch.randn_like(desired_pos_b) * self.cfg.obs_pos_noise_std
+            grav_b = grav_b + torch.randn_like(grav_b) * self.cfg.obs_grav_noise_std
+            grav_b = grav_b / grav_b.norm(dim=-1, keepdim=True).clamp_min(1e-6)
         obs = torch.cat(
             [
                 self._robot.data.root_lin_vel_b,
                 self._robot.data.root_ang_vel_b,
-                self._robot.data.projected_gravity_b,
+                grav_b,
                 desired_pos_b,
             ],
             dim=-1,
@@ -265,6 +298,8 @@ class CrazyflieHoverEnv(DirectRLEnv):
             self._randomize_mass(env_ids)
         if self.cfg.randomize_motor:
             self._randomize_motor(env_ids)
+        if self.cfg.randomize_force:
+            self._randomize_force(env_ids)
 
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
@@ -339,6 +374,41 @@ class CrazyflieHoverEnv(DirectRLEnv):
         self._thrust_gain[env_ids, 0] = self._rand(n, 1.0 - r, 1.0 + r)
         bias = self.cfg.motor_moment_bias_scale * self.cfg.moment_scale
         self._moment_bias[env_ids] = self._rand(n * 3, -bias, bias).view(n, 3)
+
+    def _sample_force(self, n: int, scale: float) -> torch.Tensor:
+        """Sample ``(n, 3)`` body-frame forces: random direction, magnitude
+        ``U(0, scale) * robot_weight`` (M5 force perturbation)."""
+        direction = torch.randn(n, 3, device=self.device)
+        direction = direction / direction.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        magnitude = self._rand(n, 0.0, scale).unsqueeze(-1) * self._robot_weight
+        return direction * magnitude
+
+    def _randomize_force(self, env_ids: torch.Tensor) -> None:
+        """Resample the per-episode sustained 'wind' force (M5 force perturbation).
+
+        The impulse 'gust/touch' component is sampled per step in
+        ``_apply_force_perturbation``; only the sustained wind is set here.
+        """
+        self._wind_force[env_ids] = self._sample_force(len(env_ids), self.cfg.force_wind_scale)
+
+    def _apply_force_perturbation(self) -> None:
+        """Add a body-frame disturbance force = sustained wind + occasional impulse.
+
+        ``self._wind_force`` is the per-episode sustained component (resampled at
+        reset). On top of it, each step has a ``force_impulse_prob`` chance per env
+        of a one-step random 'gust/touch' kick. Both are added to the control
+        thrust already set in ``_pre_physics_step`` (the wrench composer takes
+        body-frame forces); x/y are pure disturbance, z stacks on the control
+        thrust. Called only when ``randomize_force`` is True, so the x/y thrust
+        components stay 0 in the baseline.
+        """
+        disturb = self._wind_force.clone()
+        hit = torch.rand(self.num_envs, device=self.device) < self.cfg.force_impulse_prob
+        if hit.any():
+            disturb += self._sample_force(self.num_envs, self.cfg.force_impulse_scale) * hit.unsqueeze(-1)
+        self._thrust[:, 0, 0] = disturb[:, 0]
+        self._thrust[:, 0, 1] = disturb[:, 1]
+        self._thrust[:, 0, 2] += disturb[:, 2]
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first time
