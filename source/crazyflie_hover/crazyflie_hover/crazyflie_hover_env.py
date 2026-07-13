@@ -19,6 +19,12 @@
 # toggles default to False; with them off this env is byte-for-byte the M3 hover
 # env. The reward is untouched (still locked). Per SPEC M4 / CLAUDE.md rule #6 the
 # toggles are enabled ONE AT A TIME across separate retrains.
+#
+# M5 (domain randomization #2) adds external force perturbations (sustained
+# "wind" + impulse "gusts") and Gaussian observation noise. M6 (#3) adds
+# 1-timestep action latency and a random center-of-mass offset. Same convention:
+# each toggle defaults to reproduce the prior env when off, and is enabled one at
+# a time across separate retrains. Full suite = seven perturbation types.
 
 from __future__ import annotations
 
@@ -143,6 +149,24 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     obs_grav_noise_std = 0.02       # on the unit gravity direction, then renormalized
     #                                 (~1-2 deg orientation noise)
 
+    # --- M6 domain randomization (#3) ---------------------------------------
+    # Cumulative on top of M4+M5 (all prior toggles stay True); enabled ONE AT A
+    # TIME across separate retrains (CLAUDE.md rule #6). Run 1: action latency.
+    # Run 2: + CoM offset. After run 2 all seven perturbation types are active.
+    action_latency: bool = True     # M6 run 1: 1-timestep action latency
+    randomize_com: bool = False     # M6 run 2: random CoM offset (off for run 1)
+
+    # action latency, when action_latency: the wrench applied this control step is
+    # built from the PREVIOUS step's action (a one-policy-timestep actuation delay,
+    # the sim-to-real transport/compute lag). Buffer is zeroed at reset so no action
+    # leaks across episodes; no-op when False (current action applied immediately).
+
+    # CoM offset, when randomize_com: per-env center-of-mass shift, U(-r, r) per
+    # axis, applied to the captured default CoM at reset so resets don't compound
+    # (mirrors Isaac Lab's randomize_rigid_body_com). Models build/payload CoM
+    # error the policy must trim against. No-op when False (CoMs untouched).
+    com_offset_range = 0.005        # m, +/- per axis (x/y/z), i.e. +/-5 mm
+
 
 class CrazyflieHoverEnv(DirectRLEnv):
     cfg: CrazyflieHoverEnvCfg
@@ -163,6 +187,10 @@ class CrazyflieHoverEnv(DirectRLEnv):
         # resampled each reset. Zero reproduces the baseline when randomize_force
         # is False. Impulse "gust/touch" kicks are sampled per step.
         self._wind_force = torch.zeros(self.num_envs, 3, device=self.device)
+        # M6 action latency: one-step buffer holding the most recent action, applied
+        # on the NEXT control step. Zeros reproduce the baseline when action_latency
+        # is False (the buffer is simply never read).
+        self._delayed_actions = torch.zeros_like(self._actions)
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
@@ -180,6 +208,11 @@ class CrazyflieHoverEnv(DirectRLEnv):
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
         self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
+        # M6 CoM randomization: capture the default CoMs (num_envs, num_bodies, 7:
+        # pos + quat, CPU) so per-reset offsets are applied off the default and don't
+        # compound. Body ids as a CPU int tensor for indexing set_coms.
+        self._default_coms = self._robot.root_physx_view.get_coms().clone()
+        self._com_body_ids = torch.tensor(self._body_id, dtype=torch.int)
 
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
@@ -201,7 +234,13 @@ class CrazyflieHoverEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor):
-        self._actions = actions.clone().clamp(-1.0, 1.0)
+        raw_actions = actions.clone().clamp(-1.0, 1.0)
+        if self.cfg.action_latency:
+            # Apply the previous step's action; queue the new one for next step
+            # (1-timestep actuation delay). Swap keeps both as distinct tensors.
+            self._actions, self._delayed_actions = self._delayed_actions, raw_actions
+        else:
+            self._actions = raw_actions
         self._thrust[:, 0, 2] = (
             self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
         ) * self._thrust_gain[:, 0]
@@ -287,6 +326,8 @@ class CrazyflieHoverEnv(DirectRLEnv):
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
         self._actions[env_ids] = 0.0
+        # M6: clear the latency buffer so no action carries across the episode boundary
+        self._delayed_actions[env_ids] = 0.0
         # HOVER: fixed goal at the env origin (xy) and cfg.hover_height (z), instead of
         # the stock per-episode random sample. This is the one task-level deviation.
         self._desired_pos_w[env_ids, :2] = self._terrain.env_origins[env_ids, :2]
@@ -300,6 +341,8 @@ class CrazyflieHoverEnv(DirectRLEnv):
             self._randomize_motor(env_ids)
         if self.cfg.randomize_force:
             self._randomize_force(env_ids)
+        if self.cfg.randomize_com:
+            self._randomize_com(env_ids)
 
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
@@ -374,6 +417,22 @@ class CrazyflieHoverEnv(DirectRLEnv):
         self._thrust_gain[env_ids, 0] = self._rand(n, 1.0 - r, 1.0 + r)
         bias = self.cfg.motor_moment_bias_scale * self.cfg.moment_scale
         self._moment_bias[env_ids] = self._rand(n * 3, -bias, bias).view(n, 3)
+
+    def _randomize_com(self, env_ids: torch.Tensor) -> None:
+        """Offset each env's body center of mass by ``U(-r, r)`` per axis (M6 CoM DR).
+
+        Applied to the captured default CoMs so repeated resets don't compound
+        (mirrors Isaac Lab's ``randomize_rigid_body_com`` event). Only the position
+        columns (:3) of the (num_envs, num_bodies, 7) CoM tensor are shifted; the
+        CoM-frame orientation (3:7) is left untouched. PhysX CoM views are CPU-side,
+        hence the ``.cpu()`` env ids.
+        """
+        ids_cpu = env_ids.cpu()
+        r = self.cfg.com_offset_range
+        offset = torch.empty(len(ids_cpu), 1, 3).uniform_(-r, r)
+        coms = self._default_coms.clone()
+        coms[ids_cpu[:, None], self._com_body_ids, :3] += offset
+        self._robot.root_physx_view.set_coms(coms, ids_cpu)
 
     def _sample_force(self, n: int, scale: float) -> torch.Tensor:
         """Sample ``(n, 3)`` body-frame forces: random direction, magnitude
