@@ -128,7 +128,7 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     # Cumulative on top of M4 (all three M4 toggles stay True); enabled ONE AT A
     # TIME across separate retrains (CLAUDE.md rule #6). Run 1: force. Run 2: + noise.
     randomize_force: bool = True    # M5 run 1: external force perturbations
-    observe_noise: bool = False     # M5 run 2: Gaussian observation noise (off for run 1)
+    observe_noise: bool = True      # M5 run 2: Gaussian observation noise (+ force from run 1)
 
     # force perturbation, when randomize_force: a body-frame disturbance force =
     # sustained per-episode "wind" (resampled each reset) + occasional impulse
