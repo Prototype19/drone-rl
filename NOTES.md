@@ -173,3 +173,32 @@ These are the knobs available for Phase 4+ tuning; per the SPEC we do **not** to
 ### Reminders
 - ⚠️ Per CLAUDE.md rule #5, the reward function is now **LOCKED** after M3 — any change needs a proposal first.
 - W&B logging still optional/deferred (needs user's API key as env var) — now demoted to optional in SPEC §2 Future work.
+
+---
+
+## Session Handoff — 2026-07-12 (M5–M7 DONE ✅ · M8 BLOCKED ⛔)
+
+**For the next session: M4→M7 are complete, verified, tagged, and pushed. M8 (obstacle avoidance) is started but BLOCKED on a GPU crash — the WIP is parked on branch `experiment/m8-obstacle`, NOT on master. Do not start M9 without user approval.**
+
+### Done this session (all on master, pushed)
+- **M5** — DR #2 (force perturbations + obs noise), tag `v0.5-domain-rand-2`.
+- **M6** — DR #3 (action latency + CoM offset), tag `v0.6-domain-rand-full`. Full 7-perturbation robust hover, died=0.
+- **M7** — Waypoint following (`Isaac-Crazyflie-Waypoint-Direct-v0`), tag `v0.7-waypoint`. Reward ~250, ~17 waypoints/20 s episode; square known-path video via the scripted `...-Waypoint-Square-...` variant.
+- Retros logged for M4/M5/M6/M7; KB gained lessons on the `max_iterations` trap and Isaac Lab task-variant patterns. Drone `origin` remote switched SSH→HTTPS (pushes/fetches now seamless).
+
+### M8 — where it's blocked
+- **Goal (SPEC M8):** 5-ray Multiranger sensor + randomized static obstacles + proximity penalty + collision termination; success bar ≥80% course completion.
+- **Approach built (on `experiment/m8-obstacle`, commit `75fe936`):** `Isaac-Crazyflie-Obstacle-Direct-v0` subclassing the waypoint env — per-env kinematic pillar obstacles (`RigidObjectCollection`), a 5-ray **MultiMeshRayCaster** (obs 12→17), proximity penalty, collision termination. Reward change + sensor choice approved and logged in a SPEC Decision Log row (on the branch).
+- **⛔ BLOCKER:** the obstacle-env **smoke test crashes at the first reset** with a CUDA **device-side assert** + repeated `omni.physx.fabric.plugin ... DirectGpuHelper.cpp` errors. Reproduced twice (512 envs; 64 envs with `CUDA_LAUNCH_BLOCKING=1`). The PhysX **GPU-fabric pipeline is corrupted before** Python reaches `sensor.reset` (that line is where the poisoned CUDA context first surfaces, not the cause). Stopped here per the two-strikes stop-and-ask rule.
+- **Prime suspects (new-in-M8, both touch the fabric GPU pipeline):** the kinematic `RigidObjectCollection` + per-env pose writes, and/or `MultiMeshRayCaster` tracking per-env meshes — in the inherited `clone_in_fabric=True, replicate_physics=True` scene, on this aarch64 Isaac Sim build.
+
+### Next-session plan for M8 (decision still open)
+1. **Bisect** the culprit: one smoke run with the sensor disabled, one with the obstacle collection disabled → see which subsystem triggers the assert.
+2. **Config attempts:** try `clone_in_fabric=False` and/or `replicate_physics=False` on the obstacle scene cfg.
+3. **If the sensor is the culprit:** fall back to an **analytic 5-ray Multiranger** (compute ray distances from drone pose + known pillar geometry) — sidesteps MultiMeshRayCaster entirely; update the SPEC Decision Log sensor choice.
+4. When it smoke-passes: full train (`--max_iterations 3000`, watch it converges), course-navigation video, EXPERIMENTS row, mark M8 ☑, tag `v0.8-obstacle-avoid`.
+5. **Retro TODO:** capture the MultiMeshRayCaster + fabric CUDA-assert as an **aarch64 KB gotcha** once resolved (matches the global "record aarch64 gotchas" rule).
+
+### Reminders
+- Reward stays **LOCKED** (rule #5); the M8 proximity-penalty change is pre-approved but the sensor approach may still change.
+- M8 WIP lives ONLY on `experiment/m8-obstacle`; master is clean at `v0.7-waypoint`.
