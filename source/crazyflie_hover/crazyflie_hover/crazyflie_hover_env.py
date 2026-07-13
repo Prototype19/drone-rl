@@ -154,7 +154,7 @@ class CrazyflieHoverEnvCfg(DirectRLEnvCfg):
     # TIME across separate retrains (CLAUDE.md rule #6). Run 1: action latency.
     # Run 2: + CoM offset. After run 2 all seven perturbation types are active.
     action_latency: bool = True     # M6 run 1: 1-timestep action latency
-    randomize_com: bool = False     # M6 run 2: random CoM offset (off for run 1)
+    randomize_com: bool = True      # M6 run 2: random CoM offset (+ latency from run 1)
 
     # action latency, when action_latency: the wrench applied this control step is
     # built from the PREVIOUS step's action (a one-policy-timestep actuation delay,
